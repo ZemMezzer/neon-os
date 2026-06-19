@@ -723,6 +723,86 @@ static int dbc_2nd (BYTE c)
 	return 0;
 }
 
+#if FF_USE_LFN
+static BYTE neon_lfn_checksum(const BYTE* sfn) {
+    BYTE sum = 0;
+
+    for (UINT i = 0; i < 11; i++) {
+        sum = (BYTE)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + sfn[i]);
+    }
+
+    return sum;
+}
+
+static UINT neon_lfn_length(const WCHAR* text) {
+    UINT len = 0;
+
+    if (!text) {
+        return 0;
+    }
+
+    while (text[len] != 0) {
+        len++;
+
+        if (len > FF_MAX_LFN) {
+            break;
+        }
+    }
+
+    return len;
+}
+
+static void neon_write_lfn_word(volatile BYTE* entry, UINT offset, WORD value) {
+    entry[offset + 0] = (BYTE)value;
+    entry[offset + 1] = (BYTE)(value >> 8);
+}
+
+static void neon_clear_dir_entry(volatile BYTE* entry) {
+    for (UINT i = 0; i < SZDIRE; i++) {
+        entry[i] = 0;
+    }
+}
+
+static void neon_write_lfn_entry(
+    volatile BYTE* entry,
+    BYTE order,
+    BYTE checksum,
+    const WCHAR* name,
+    UINT name_len,
+    UINT logical_order
+)
+{
+    static const BYTE offsets[13] = {
+        1, 3, 5, 7, 9,
+        14, 16, 18, 20, 22, 24,
+        28, 30
+    };
+
+    neon_clear_dir_entry(entry);
+
+    entry[LDIR_Ord] = order;
+    entry[LDIR_Attr] = AM_LFN;
+    entry[LDIR_Type] = 0;
+    entry[LDIR_Chksum] = checksum;
+    entry[LDIR_FstClusLO + 0] = 0;
+    entry[LDIR_FstClusLO + 1] = 0;
+
+    for (UINT i = 0; i < 13; i++) {
+        UINT char_index = (logical_order - 1) * 13 + i;
+        WORD value;
+
+        if (char_index < name_len) {
+            value = (WORD)name[char_index];
+        } else if (char_index == name_len) {
+            value = 0x0000;
+        } else {
+            value = 0xFFFF;
+        }
+
+        neon_write_lfn_word(entry, offsets[i], value);
+    }
+}
+#endif
 
 #if FF_USE_LFN
 
@@ -1797,8 +1877,13 @@ static FRESULT dir_alloc (
     FRESULT res;
     UINT n;
     UINT guard;
+    DWORD start_dptr;
     FATFS* fs = dp->obj.fs;
 
+
+    if (n_ent == 0) {
+        return FR_INVALID_OBJECT;
+    }
 
     res = dir_sdi(dp, 0);
 
@@ -1809,17 +1894,16 @@ static FRESULT dir_alloc (
 
     n = 0;
     guard = 0;
+    start_dptr = 0;
 
     while (res == FR_OK) {
         BYTE first;
 
-        if (guard++ > 1024) {
+        if (guard++ > 8192) {
             return FR_INT_ERR;
         }
 
-
         res = move_window(fs, dp->sect);
-
 
         if (res != FR_OK) {
             return res;
@@ -1828,16 +1912,19 @@ static FRESULT dir_alloc (
         first = dp->dir[DIR_Name];
 
         if (first == DDEM || first == 0) {
+            if (n == 0) {
+                start_dptr = dp->dptr;
+            }
 
             n++;
 
             if (n == n_ent) {
-                return FR_OK;
+                return dir_sdi(dp, start_dptr);
             }
         } else {
             n = 0;
+            start_dptr = 0;
         }
-
 
         res = dir_next(dp, 1);
     }
@@ -1845,7 +1932,6 @@ static FRESULT dir_alloc (
     if (res == FR_NO_FILE) {
         return FR_DENIED;
     }
-
 
     return res;
 }
@@ -2389,6 +2475,170 @@ static FRESULT dir_read (
 
 #endif	/* FF_FS_MINIMIZE <= 1 || FF_USE_LABEL || FF_FS_RPATH >= 2 */
 
+#if FF_USE_LFN
+
+static void neon_sfn_to_name(TCHAR* out, UINT out_capacity, const BYTE* sfn) {
+    UINT pos = 0;
+    UINT i;
+    BYTE has_ext = 0;
+
+    if (!out || out_capacity == 0 || !sfn) {
+        return;
+    }
+
+    for (i = 8; i < 11; i++) {
+        if (sfn[i] != ' ') {
+            has_ext = 1;
+            break;
+        }
+    }
+
+    for (i = 0; i < 8 && pos + 1 < out_capacity; i++) {
+        BYTE ch = sfn[i];
+
+        if (ch == ' ') {
+            break;
+        }
+
+        if (i == 0 && ch == 0x05) {
+            ch = 0xE5;
+        }
+
+        out[pos++] = (TCHAR)ch;
+    }
+
+    if (has_ext && pos + 1 < out_capacity) {
+        out[pos++] = '.';
+
+        for (i = 8; i < 11 && pos + 1 < out_capacity; i++) {
+            BYTE ch = sfn[i];
+
+            if (ch == ' ') {
+                break;
+            }
+
+            out[pos++] = (TCHAR)ch;
+        }
+    }
+
+    out[pos] = 0;
+}
+
+#if FF_USE_LFN
+static void neon_lfn_to_tchar_name(TCHAR* out, UINT out_capacity, const WCHAR* lfn) {
+    UINT pos = 0;
+
+    if (!out || out_capacity == 0 || !lfn) {
+        return;
+    }
+
+    while (pos + 1 < out_capacity && lfn[pos] != 0) {
+        WCHAR ch = lfn[pos];
+
+        if (ch < 0x80) {
+            out[pos] = (TCHAR)ch;
+        } else {
+            out[pos] = (TCHAR)'?';
+        }
+
+        pos++;
+    }
+
+    out[pos] = 0;
+}
+#endif
+
+static WORD neon_read_lfn_word(const volatile BYTE* entry, UINT offset) {
+    return (WORD)entry[offset + 0] | ((WORD)entry[offset + 1] << 8);
+}
+
+static void neon_clear_lfn_buffer(WCHAR* buffer) {
+    volatile WCHAR* p;
+
+    if (!buffer) {
+        return;
+    }
+
+    p = (volatile WCHAR*)buffer;
+
+    for (UINT i = 0; i < (FF_MAX_LFN + 1); i++) {
+        p[i] = 0;
+    }
+}
+
+static void neon_copy_lfn_part_from_entry(WCHAR* output, const volatile BYTE* entry, UINT logical_order) {
+    static const BYTE offsets[13] = {
+        1, 3, 5, 7, 9,
+        14, 16, 18, 20, 22, 24,
+        28, 30
+    };
+
+    UINT base;
+
+    if (!output) {
+        return;
+    }
+
+    if (logical_order == 0) {
+        return;
+    }
+
+    base = (logical_order - 1) * 13;
+
+    for (UINT i = 0; i < 13; i++) {
+        WORD ch = neon_read_lfn_word(entry, offsets[i]);
+        UINT index = base + i;
+
+        if (index >= FF_MAX_LFN) {
+            return;
+        }
+
+        if (ch == 0x0000) {
+            output[index] = 0;
+            return;
+        }
+
+        if (ch == 0xFFFF) {
+            return;
+        }
+
+        output[index] = (WCHAR)ch;
+    }
+}
+
+static int neon_lfn_equals(const WCHAR* a, const WCHAR* b) {
+    UINT i = 0;
+
+    if (!a || !b) {
+        return 0;
+    }
+
+    while (i <= FF_MAX_LFN) {
+        WCHAR ca = a[i];
+        WCHAR cb = b[i];
+
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = (WCHAR)(ca - 'A' + 'a');
+        }
+
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = (WCHAR)(cb - 'A' + 'a');
+        }
+
+        if (ca != cb) {
+            return 0;
+        }
+
+        if (ca == 0) {
+            return 1;
+        }
+
+        i++;
+    }
+
+    return 0;
+}
+#endif
 
 /*-----------------------------------------------------------------------*/
 /* Directory handling - Find an object in the directory                  */
@@ -2402,10 +2652,13 @@ static FRESULT dir_find (
     FATFS* fs = dp->obj.fs;
     UINT guard = 0;
 
-
 #if FF_USE_LFN
-    return FR_INVALID_NAME;
-#else
+    static WCHAR found_lfn[FF_MAX_LFN + 1];
+    BYTE have_lfn = 0;
+    BYTE lfn_checksum = 0;
+#endif
+
+
     res = dir_sdi(dp, 0);
 
 
@@ -2413,12 +2666,18 @@ static FRESULT dir_find (
         return res;
     }
 
+#if FF_USE_LFN
+
+    neon_clear_lfn_buffer(found_lfn);
+
+#endif
+
     while (res == FR_OK) {
         BYTE first;
         BYTE attr;
-        int same;
 
-        if (guard++ > 1024) {
+
+        if (guard++ > 16384) {
             return FR_INT_ERR;
         }
 
@@ -2430,50 +2689,139 @@ static FRESULT dir_find (
             return res;
         }
 
+
         first = dp->dir[DIR_Name];
+
 
         if (first == 0) {
             return FR_NO_FILE;
         }
 
         if (first == DDEM) {
+
+#if FF_USE_LFN
+            have_lfn = 0;
+
+            neon_clear_lfn_buffer(found_lfn);
+#endif
+
             res = dir_next(dp, 0);
             continue;
         }
+
 
         attr = dp->dir[DIR_Attr];
 
+
+#if FF_USE_LFN
+        if ((attr & AM_MASK) == AM_LFN) {
+            BYTE ord;
+            BYTE logical_order;
+
+
+            ord = dp->dir[LDIR_Ord];
+            logical_order = ord & 0x1F;
+
+            if (logical_order == 0 || logical_order > 20) {
+
+                have_lfn = 0;
+
+                neon_clear_lfn_buffer(found_lfn);
+
+                res = dir_next(dp, 0);
+                continue;
+            }
+
+            if (ord & LLEF) {
+
+                neon_clear_lfn_buffer(found_lfn);
+
+                have_lfn = 1;
+                lfn_checksum = dp->dir[LDIR_Chksum];
+            }
+
+            if (have_lfn) {
+
+                neon_copy_lfn_part_from_entry(
+                    found_lfn,
+                    (const volatile BYTE*)dp->dir,
+                    logical_order
+                );
+
+            }
+
+
+            res = dir_next(dp, 0);
+
+
+            continue;
+        }
+#endif
+
         if (attr & AM_VOL) {
+
+#if FF_USE_LFN
+            have_lfn = 0;
+            neon_clear_lfn_buffer(found_lfn);
+#endif
+
             res = dir_next(dp, 0);
             continue;
         }
 
-        same = 1;
+#if FF_USE_LFN
+        if (have_lfn && fs->lfnbuf) {
+            BYTE real_checksum;
 
-        for (UINT i = 0; i < 11; i++) {
-            volatile BYTE a = dp->dir[DIR_Name + i];
-            volatile BYTE b = dp->fn[i];
 
-            if (a != b) {
-                same = 0;
-                break;
+            real_checksum = neon_lfn_checksum(dp->dir);
+
+
+            if (real_checksum == lfn_checksum) {
+
+                if (neon_lfn_equals(found_lfn, fs->lfnbuf)) {
+                    dp->obj.attr = attr & AM_MASK;
+                    return FR_OK;
+                }
+            }
+        }
+#endif
+
+
+        {
+            int same = 1;
+
+            for (UINT i = 0; i < 11; i++) {
+                volatile BYTE a = dp->dir[DIR_Name + i];
+                volatile BYTE b = dp->fn[i];
+
+                if (a != b) {
+                    same = 0;
+                    break;
+                }
+            }
+
+            if (same) {
+                dp->obj.attr = attr & AM_MASK;
+                return FR_OK;
             }
         }
 
-        if (same) {
-            dp->obj.attr = attr & AM_MASK;
-            return FR_OK;
-        }
+
+#if FF_USE_LFN
+        have_lfn = 0;
+
+        neon_clear_lfn_buffer(found_lfn);
+#endif
 
 
         res = dir_next(dp, 0);
+
     }
 
 
     return res;
-#endif
 }
-
 
 #if !FF_FS_READONLY
 /*-----------------------------------------------------------------------*/
@@ -2486,43 +2834,117 @@ static FRESULT dir_register (
 {
     FRESULT res;
     FATFS* fs = dp->obj.fs;
+    UINT entry_count;
 
 
-#if FF_USE_LFN
-    return FR_INVALID_NAME;
-#else
     if (dp->fn[NSFLAG] & (NS_DOT | NS_NONAME)) {
         return FR_INVALID_NAME;
     }
 
+    entry_count = 1;
 
-    res = dir_alloc(dp, 1);
+#if FF_USE_LFN
+    WCHAR* lfn;
+    UINT lfn_len;
+    UINT lfn_entries;
+    BYTE need_lfn;
+    BYTE checksum;
+
+    lfn = fs->lfnbuf;
+    lfn_len = neon_lfn_length(lfn);
+
+    need_lfn = 0;
+
+    if (lfn_len > 0) {
+        if (dp->fn[NSFLAG] & (NS_LOSS | NS_LFN | NS_BODY | NS_EXT)) {
+            need_lfn = 1;
+        }
+    }
+
+    if (lfn_len > FF_MAX_LFN) {
+        return FR_INVALID_NAME;
+    }
+
+    if (need_lfn) {
+        lfn_entries = (lfn_len + 12) / 13;
+        entry_count = lfn_entries + 1;
+    } else {
+        lfn_entries = 0;
+    }
+
+
+    res = dir_alloc(dp, entry_count);
 
 
     if (res != FR_OK) {
         return res;
     }
+
+    if (need_lfn) {
+        checksum = neon_lfn_checksum(dp->fn);
+
+
+        for (UINT logical_order = lfn_entries; logical_order >= 1; logical_order--) {
+            volatile BYTE* entry;
+            BYTE order_byte;
+
+            res = move_window(fs, dp->sect);
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            entry = (volatile BYTE*)dp->dir;
+
+            order_byte = (BYTE)logical_order;
+
+            if (logical_order == lfn_entries) {
+                order_byte |= LLEF;
+            }
+
+            neon_write_lfn_entry(
+                entry,
+                order_byte,
+                checksum,
+                lfn,
+                lfn_len,
+                logical_order
+            );
+
+            fs->wflag = 1;
+
+            res = dir_next(dp, 0);
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            if (logical_order == 1) {
+                break;
+            }
+        }
+    }
+#else
+
+    res = dir_alloc(dp, entry_count);
+
+
+    if (res != FR_OK) {
+        return res;
+    }
+#endif
 
 
     res = move_window(fs, dp->sect);
 
-
     if (res != FR_OK) {
         return res;
     }
 
-
     {
         volatile BYTE* entry = (volatile BYTE*)dp->dir;
 
-        for (UINT i = 0; i < SZDIRE; i++) {
-            entry[i] = 0;
-        }
-    }
-
-
-    {
-        volatile BYTE* entry = (volatile BYTE*)dp->dir;
+        neon_clear_dir_entry(entry);
 
         for (UINT i = 0; i < 11; i++) {
             entry[DIR_Name + i] = dp->fn[i];
@@ -2533,7 +2955,6 @@ static FRESULT dir_register (
 
 
     return FR_OK;
-#endif
 }
 
 #endif /* !FF_FS_READONLY */
@@ -3667,6 +4088,14 @@ static FRESULT mount_volume (
     }
 
     vfs->id = Fsid;
+
+#if FF_USE_LFN == 1
+    vfs->lfnbuf = LfnBuf;
+#if FF_FS_EXFAT
+    vfs->dirbuf = DirBuf;
+#endif
+#endif
+
     vfs->fs_type = FS_FAT16;
 
 
@@ -3826,6 +4255,14 @@ FRESULT f_open (
 
     dj.obj.fs = fs;
 
+#if FF_USE_LFN
+
+    if (!fs->lfnbuf) {
+        return FR_INT_ERR;
+    }
+
+#endif
+
 
     res = follow_path(&dj, path);
 
@@ -3866,13 +4303,6 @@ FRESULT f_open (
         return res;
     }
 
-    /*
-        For this debug version:
-        - If the file is new, create a clean 8.3 FAT directory entry.
-        - If FA_CREATE_ALWAYS is used on an existing file, truncate the entry.
-        - We intentionally avoid the more complex generic FatFs path here.
-    */
-
     if (!opened_existing || (create_mode == FA_CREATE_ALWAYS)) {
         volatile BYTE* entry = (volatile BYTE*)dj.dir;
 
@@ -3882,35 +4312,28 @@ FRESULT f_open (
         start_cluster = 0;
         fattime = GET_FATTIME();
 
-
         entry[DIR_Attr] = attr;
         entry[DIR_NTres] = 0;
         entry[DIR_CrtTime10] = 0;
-
 
         entry[DIR_CrtTime + 0] = (BYTE)(fattime);
         entry[DIR_CrtTime + 1] = (BYTE)(fattime >> 8);
         entry[DIR_CrtTime + 2] = (BYTE)(fattime >> 16);
         entry[DIR_CrtTime + 3] = (BYTE)(fattime >> 24);
 
-
         entry[DIR_LstAccDate + 0] = 0;
         entry[DIR_LstAccDate + 1] = 0;
 
-
         entry[DIR_FstClusHI + 0] = 0;
         entry[DIR_FstClusHI + 1] = 0;
-
 
         entry[DIR_ModTime + 0] = (BYTE)(fattime);
         entry[DIR_ModTime + 1] = (BYTE)(fattime >> 8);
         entry[DIR_ModTime + 2] = (BYTE)(fattime >> 16);
         entry[DIR_ModTime + 3] = (BYTE)(fattime >> 24);
 
-
         entry[DIR_FstClusLO + 0] = 0;
         entry[DIR_FstClusLO + 1] = 0;
-
 
         entry[DIR_FileSize + 0] = 0;
         entry[DIR_FileSize + 1] = 0;
@@ -3935,12 +4358,6 @@ FRESULT f_open (
         start_cluster =
               ((DWORD)entry[DIR_FstClusLO + 0])
             | ((DWORD)entry[DIR_FstClusLO + 1] << 8);
-
-#if FF_FS_EXFAT
-        if (fs->fs_type == FS_EXFAT) {
-            return FR_INVALID_OBJECT;
-        }
-#endif
 
         if (fs->fs_type == FS_FAT32) {
             start_cluster |=
@@ -4332,11 +4749,6 @@ FRESULT f_close (
 #endif
 
     if (fp->flag & FA_MODIFIED) {
-
-        /*
-            move_window() сначала сбросит старое грязное окно, если оно есть.
-            Это важно: после f_write() там может быть изменённый FAT.
-        */
 
         res = move_window(fs, fp->dir_sect);
 
@@ -4878,35 +5290,251 @@ FRESULT f_closedir (
 /*-----------------------------------------------------------------------*/
 
 FRESULT f_readdir (
-	DIR* dp,			/* Pointer to the open directory object */
-	FILINFO* fno		/* Pointer to file information to return */
+    DIR* dp,
+    FILINFO* fno
 )
 {
-	FRESULT res;
-	FATFS *fs;
-	DEF_NAMEBUFF
+    FRESULT res;
+    FATFS* fs;
+    UINT guard = 0;
+
+#if FF_USE_LFN
+    static WCHAR found_lfn[FF_MAX_LFN + 1];
+    BYTE have_lfn = 0;
+    BYTE lfn_checksum = 0;
+#endif
 
 
-	res = validate(&dp->obj, &fs);	/* Check validity of the directory object */
-	if (res == FR_OK) {
-		if (!fno) {
-			res = dir_sdi(dp, 0);		/* Rewind the directory object */
-		} else {
-			INIT_NAMEBUFF(fs);
-			fno->fname[0] = 0;				/* Clear file information */
-			res = DIR_READ_FILE(dp);		/* Read an item */
-			if (res == FR_NO_FILE) res = FR_OK;	/* Ignore end of directory */
-			if (res == FR_OK) {				/* A valid entry is found */
-				get_fileinfo(dp, fno);		/* Get the object information */
-				res = dir_next(dp, 0);		/* Increment index for next */
-				if (res == FR_NO_FILE) res = FR_OK;	/* Ignore end of directory now */
-			}
-			FREE_NAMEBUFF();
-		}
-	}
+    if (!dp || !dp->obj.fs) {
+        return FR_INVALID_OBJECT;
+    }
 
-	if (fno && res != FR_OK) fno->fname[0] = 0;	/* Clear the file information if any error occured */
-	LEAVE_FF(fs, res);
+    fs = dp->obj.fs;
+
+    if (fno == 0) {
+        return dir_sdi(dp, 0);
+    }
+
+    fno->fname[0] = 0;
+    fno->fattrib = 0;
+    fno->ftime = 0;
+    fno->fdate = 0;
+    fno->fsize = 0;
+
+#if FF_USE_LFN
+    fno->altname[0] = 0;
+
+    neon_clear_lfn_buffer(found_lfn);
+#endif
+
+    while (1) {
+        BYTE first;
+        BYTE attr;
+
+
+        if (guard++ > 16384) {
+            return FR_INT_ERR;
+        }
+
+
+        res = move_window(fs, dp->sect);
+
+
+        if (res != FR_OK) {
+            return res;
+        }
+
+        first = dp->dir[DIR_Name];
+
+        if (first == 0) {
+            fno->fname[0] = 0;
+            return FR_OK;
+        }
+
+        if (first == DDEM) {
+
+#if FF_USE_LFN
+            have_lfn = 0;
+            neon_clear_lfn_buffer(found_lfn);
+#endif
+
+            res = dir_next(dp, 0);
+
+            if (res == FR_NO_FILE) {
+                fno->fname[0] = 0;
+                return FR_OK;
+            }
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            continue;
+        }
+
+        attr = dp->dir[DIR_Attr];
+
+#if FF_USE_LFN
+        if ((attr & AM_MASK) == AM_LFN) {
+            BYTE ord;
+            BYTE logical_order;
+
+
+            ord = dp->dir[LDIR_Ord];
+            logical_order = ord & 0x1F;
+
+            if (logical_order == 0 || logical_order > 20) {
+
+                have_lfn = 0;
+                neon_clear_lfn_buffer(found_lfn);
+
+                res = dir_next(dp, 0);
+
+                if (res == FR_NO_FILE) {
+                    fno->fname[0] = 0;
+                    return FR_OK;
+                }
+
+                if (res != FR_OK) {
+                    return res;
+                }
+
+                continue;
+            }
+
+            if (ord & LLEF) {
+
+                neon_clear_lfn_buffer(found_lfn);
+
+                have_lfn = 1;
+                lfn_checksum = dp->dir[LDIR_Chksum];
+            }
+
+            if (have_lfn) {
+
+                neon_copy_lfn_part_from_entry(
+                    found_lfn,
+                    (const volatile BYTE*)dp->dir,
+                    logical_order
+                );
+
+            }
+
+            res = dir_next(dp, 0);
+
+            if (res == FR_NO_FILE) {
+                fno->fname[0] = 0;
+                return FR_OK;
+            }
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            continue;
+        }
+#endif
+
+        if (attr & AM_VOL) {
+
+#if FF_USE_LFN
+            have_lfn = 0;
+            neon_clear_lfn_buffer(found_lfn);
+#endif
+
+            res = dir_next(dp, 0);
+
+            if (res == FR_NO_FILE) {
+                fno->fname[0] = 0;
+                return FR_OK;
+            }
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            continue;
+        }
+
+
+        fno->fattrib = attr & AM_MASK;
+
+        fno->ftime =
+              (WORD)dp->dir[DIR_ModTime + 0]
+            | ((WORD)dp->dir[DIR_ModTime + 1] << 8);
+
+        fno->fdate =
+              (WORD)dp->dir[DIR_ModTime + 2]
+            | ((WORD)dp->dir[DIR_ModTime + 3] << 8);
+
+        fno->fsize =
+              (FSIZE_t)dp->dir[DIR_FileSize + 0]
+            | ((FSIZE_t)dp->dir[DIR_FileSize + 1] << 8)
+            | ((FSIZE_t)dp->dir[DIR_FileSize + 2] << 16)
+            | ((FSIZE_t)dp->dir[DIR_FileSize + 3] << 24);
+
+#if FF_USE_LFN
+        if (have_lfn) {
+            BYTE real_checksum;
+
+
+            real_checksum = neon_lfn_checksum(dp->dir);
+
+
+            if (real_checksum == lfn_checksum && found_lfn[0] != 0) {
+
+                neon_lfn_to_tchar_name(
+                    fno->fname,
+                    sizeof(fno->fname) / sizeof(fno->fname[0]),
+                    found_lfn
+                );
+
+                neon_sfn_to_name(
+                    fno->altname,
+                    sizeof(fno->altname) / sizeof(fno->altname[0]),
+                    dp->dir + DIR_Name
+                );
+            } else {
+
+                neon_sfn_to_name(
+                    fno->fname,
+                    sizeof(fno->fname) / sizeof(fno->fname[0]),
+                    dp->dir + DIR_Name
+                );
+
+                fno->altname[0] = 0;
+            }
+        } else {
+
+            neon_sfn_to_name(
+                fno->fname,
+                sizeof(fno->fname) / sizeof(fno->fname[0]),
+                dp->dir + DIR_Name
+            );
+
+            fno->altname[0] = 0;
+        }
+#else
+        neon_sfn_to_name(
+            fno->fname,
+            sizeof(fno->fname) / sizeof(fno->fname[0]),
+            dp->dir + DIR_Name
+        );
+#endif
+
+        res = dir_next(dp, 0);
+
+        if (res == FR_NO_FILE) {
+            return FR_OK;
+        }
+
+        if (res != FR_OK) {
+            return res;
+        }
+
+
+        return FR_OK;
+    }
 }
 
 
@@ -5233,81 +5861,242 @@ FRESULT f_unlink (
 /*-----------------------------------------------------------------------*/
 
 FRESULT f_mkdir (
-	const TCHAR* path		/* Pointer to the directory path */
+    const TCHAR* path
 )
 {
-	FRESULT res;
-	FATFS *fs;
-	DIR dj;
-	FFOBJID sobj;
-	DWORD dcl, pcl, tm;
-	DEF_NAMEBUFF
+    FATFS* fs;
+    DIR dj;
+    FFOBJID sobj;
+    FRESULT res;
 
+    DWORD new_cluster;
+    DWORD parent_cluster;
+    DWORD fat_time;
 
-	res = mount_volume(&path, &fs, FA_WRITE);	/* Get logical drive and mount the volume if needed */
-	if (res == FR_OK) {
-		dj.obj.fs = fs;
-		INIT_NAMEBUFF(fs);
-		res = follow_path(&dj, path);			/* Follow the file path */
-		if (res == FR_OK) {						/* Invalid name or name collision */
-			res = (dj.fn[NSFLAG] & (NS_DOT | NS_NONAME)) ? FR_INVALID_NAME : FR_EXIST;
-		}
-		if (res == FR_NO_FILE) {				/* It is clear to create a new directory */
-			sobj.fs = fs;						/* New object ID to create a new chain */
-			dcl = create_chain(&sobj, 0);		/* Allocate a cluster for the new directory */
-			res = FR_OK;
-			if (dcl == 0) res = FR_DENIED;		/* No space to allocate a new cluster? */
-			if (dcl == 1) res = FR_INT_ERR;		/* Any insanity? */
-			if (dcl == 0xFFFFFFFF) res = FR_DISK_ERR;	/* Disk error? */
-			tm = GET_FATTIME();
-			if (res == FR_OK) {
-				res = dir_clear(fs, dcl);		/* Clear the allocated cluster as new direcotry table */
-				if (res == FR_OK) {
-					if (!FF_FS_EXFAT || fs->fs_type != FS_EXFAT) {	/* Create dot entries (FAT only) */
-						memset(fs->win + DIR_Name, ' ', 11);	/* Create "." entry */
-						fs->win[DIR_Name] = '.';
-						fs->win[DIR_Attr] = AM_DIR;
-						st_32(fs->win + DIR_ModTime, tm);
-						st_clust(fs, fs->win, dcl);
-						memcpy(fs->win + SZDIRE, fs->win, SZDIRE);	/* Create ".." entry */
-						fs->win[SZDIRE + 1] = '.'; pcl = dj.obj.sclust;
-						st_clust(fs, fs->win + SZDIRE, pcl);
-						fs->wflag = 1;
-					}
-					res = dir_register(&dj);	/* Register the object to the parent directory */
-				}
-			}
-			if (res == FR_OK) {
-#if FF_FS_EXFAT
-				if (fs->fs_type == FS_EXFAT) {	/* Initialize directory entry block */
-					st_32(fs->dirbuf + XDIR_CrtTime, tm);	/* Created time */
-					st_32(fs->dirbuf + XDIR_ModTime, tm);
-					st_32(fs->dirbuf + XDIR_FstClus, dcl);	/* Table start cluster */
-					st_32(fs->dirbuf + XDIR_FileSize, (DWORD)fs->csize * SS(fs));	/* Directory size needs to be valid */
-					st_32(fs->dirbuf + XDIR_ValidFileSize, (DWORD)fs->csize * SS(fs));
-					fs->dirbuf[XDIR_GenFlags] = 3;			/* Initialize the object flag */
-					fs->dirbuf[XDIR_Attr] = AM_DIR;			/* Attribute */
-					res = store_xdir(&dj);
-				} else
-#endif
-				{
-					st_32(dj.dir + DIR_CrtTime, tm);	/* Created time */
-					st_32(dj.dir + DIR_ModTime, tm);
-					st_clust(fs, dj.dir, dcl);			/* Table start cluster */
-					dj.dir[DIR_Attr] = AM_DIR;			/* Attribute */
-					fs->wflag = 1;
-				}
-				if (res == FR_OK) {
-					res = sync_fs(fs);
-				}
-			} else {
-				remove_chain(&sobj, dcl, 0);		/* Could not register, remove the allocated cluster */
-			}
-		}
-		FREE_NAMEBUFF();
-	}
+    LBA_t dir_sector;
 
-	LEAVE_FF(fs, res);
+    static BYTE sector[512] __attribute__((aligned(16)));
+
+    DEF_NAMEBUFF
+
+    if (!path) {
+        return FR_INVALID_NAME;
+    }
+
+    res = mount_volume(&path, &fs, FA_WRITE);
+
+    if (res != FR_OK) {
+        return res;
+    }
+
+    {
+        volatile BYTE* p = (volatile BYTE*)&dj;
+
+        for (UINT i = 0; i < sizeof(DIR); i++) {
+            p[i] = 0;
+        }
+    }
+
+    dj.obj.fs = fs;
+
+    INIT_NAMEBUFF(fs);
+
+    res = follow_path(&dj, path);
+
+    if (res == FR_OK) {
+        res = (dj.fn[NSFLAG] & (NS_DOT | NS_NONAME)) ? FR_INVALID_NAME : FR_EXIST;
+        goto cleanup;
+    }
+
+    if (res != FR_NO_FILE) {
+        goto cleanup;
+    }
+
+    if (dj.fn[NSFLAG] & (NS_DOT | NS_NONAME)) {
+        res = FR_INVALID_NAME;
+        goto cleanup;
+    }
+
+    parent_cluster = dj.obj.sclust;
+
+    {
+        volatile BYTE* p = (volatile BYTE*)&sobj;
+
+        for (UINT i = 0; i < sizeof(FFOBJID); i++) {
+            p[i] = 0;
+        }
+    }
+
+    sobj.fs = fs;
+
+    new_cluster = create_chain(&sobj, 0);
+
+    if (new_cluster == 0) {
+        res = FR_DENIED;
+        goto cleanup;
+    }
+
+    if (new_cluster == 1) {
+        res = FR_INT_ERR;
+        goto cleanup;
+    }
+
+    if (new_cluster == 0xFFFFFFFF) {
+        res = FR_DISK_ERR;
+        goto cleanup;
+    }
+
+    dir_sector = clst2sect(fs, new_cluster);
+
+    if (dir_sector == 0) {
+        remove_chain(&sobj, new_cluster, 0);
+        res = FR_INT_ERR;
+        goto cleanup;
+    }
+
+    res = sync_window(fs);
+
+    if (res != FR_OK) {
+        remove_chain(&sobj, new_cluster, 0);
+        goto cleanup;
+    }
+
+    fat_time = GET_FATTIME();
+
+    for (UINT sector_index = 0; sector_index < fs->csize; sector_index++) {
+        volatile BYTE* p = (volatile BYTE*)sector;
+
+        for (UINT i = 0; i < sizeof(sector); i++) {
+            p[i] = 0;
+        }
+
+        if (sector_index == 0) {
+            for (UINT i = 0; i < 11; i++) {
+                p[DIR_Name + i] = ' ';
+            }
+
+            p[DIR_Name] = '.';
+            p[DIR_Attr] = AM_DIR;
+            p[DIR_NTres] = 0;
+            p[DIR_CrtTime10] = 0;
+
+            p[DIR_CrtTime + 0] = (BYTE)(fat_time);
+            p[DIR_CrtTime + 1] = (BYTE)(fat_time >> 8);
+            p[DIR_CrtTime + 2] = (BYTE)(fat_time >> 16);
+            p[DIR_CrtTime + 3] = (BYTE)(fat_time >> 24);
+
+            p[DIR_LstAccDate + 0] = 0;
+            p[DIR_LstAccDate + 1] = 0;
+
+            p[DIR_FstClusHI + 0] = (BYTE)(new_cluster >> 16);
+            p[DIR_FstClusHI + 1] = (BYTE)(new_cluster >> 24);
+
+            p[DIR_ModTime + 0] = (BYTE)(fat_time);
+            p[DIR_ModTime + 1] = (BYTE)(fat_time >> 8);
+            p[DIR_ModTime + 2] = (BYTE)(fat_time >> 16);
+            p[DIR_ModTime + 3] = (BYTE)(fat_time >> 24);
+
+            p[DIR_FstClusLO + 0] = (BYTE)(new_cluster);
+            p[DIR_FstClusLO + 1] = (BYTE)(new_cluster >> 8);
+
+            p[DIR_FileSize + 0] = 0;
+            p[DIR_FileSize + 1] = 0;
+            p[DIR_FileSize + 2] = 0;
+            p[DIR_FileSize + 3] = 0;
+
+            {
+                UINT base = SZDIRE;
+
+                for (UINT i = 0; i < 11; i++) {
+                    p[base + DIR_Name + i] = ' ';
+                }
+
+                p[base + DIR_Name + 0] = '.';
+                p[base + DIR_Name + 1] = '.';
+
+                p[base + DIR_Attr] = AM_DIR;
+                p[base + DIR_NTres] = 0;
+                p[base + DIR_CrtTime10] = 0;
+
+                p[base + DIR_CrtTime + 0] = (BYTE)(fat_time);
+                p[base + DIR_CrtTime + 1] = (BYTE)(fat_time >> 8);
+                p[base + DIR_CrtTime + 2] = (BYTE)(fat_time >> 16);
+                p[base + DIR_CrtTime + 3] = (BYTE)(fat_time >> 24);
+
+                p[base + DIR_LstAccDate + 0] = 0;
+                p[base + DIR_LstAccDate + 1] = 0;
+
+                p[base + DIR_FstClusHI + 0] = (BYTE)(parent_cluster >> 16);
+                p[base + DIR_FstClusHI + 1] = (BYTE)(parent_cluster >> 24);
+
+                p[base + DIR_ModTime + 0] = (BYTE)(fat_time);
+                p[base + DIR_ModTime + 1] = (BYTE)(fat_time >> 8);
+                p[base + DIR_ModTime + 2] = (BYTE)(fat_time >> 16);
+                p[base + DIR_ModTime + 3] = (BYTE)(fat_time >> 24);
+
+                p[base + DIR_FstClusLO + 0] = (BYTE)(parent_cluster);
+                p[base + DIR_FstClusLO + 1] = (BYTE)(parent_cluster >> 8);
+
+                p[base + DIR_FileSize + 0] = 0;
+                p[base + DIR_FileSize + 1] = 0;
+                p[base + DIR_FileSize + 2] = 0;
+                p[base + DIR_FileSize + 3] = 0;
+            }
+        }
+
+        if (disk_write(fs->pdrv, sector, dir_sector + sector_index, 1) != RES_OK) {
+            remove_chain(&sobj, new_cluster, 0);
+            res = FR_DISK_ERR;
+            goto cleanup;
+        }
+    }
+
+    res = dir_register(&dj);
+
+    if (res != FR_OK) {
+        remove_chain(&sobj, new_cluster, 0);
+        goto cleanup;
+    }
+
+    {
+        volatile BYTE* entry = (volatile BYTE*)dj.dir;
+
+        entry[DIR_Attr] = AM_DIR;
+        entry[DIR_NTres] = 0;
+        entry[DIR_CrtTime10] = 0;
+
+        entry[DIR_CrtTime + 0] = (BYTE)(fat_time);
+        entry[DIR_CrtTime + 1] = (BYTE)(fat_time >> 8);
+        entry[DIR_CrtTime + 2] = (BYTE)(fat_time >> 16);
+        entry[DIR_CrtTime + 3] = (BYTE)(fat_time >> 24);
+
+        entry[DIR_LstAccDate + 0] = 0;
+        entry[DIR_LstAccDate + 1] = 0;
+
+        entry[DIR_FstClusHI + 0] = (BYTE)(new_cluster >> 16);
+        entry[DIR_FstClusHI + 1] = (BYTE)(new_cluster >> 24);
+
+        entry[DIR_ModTime + 0] = (BYTE)(fat_time);
+        entry[DIR_ModTime + 1] = (BYTE)(fat_time >> 8);
+        entry[DIR_ModTime + 2] = (BYTE)(fat_time >> 16);
+        entry[DIR_ModTime + 3] = (BYTE)(fat_time >> 24);
+
+        entry[DIR_FstClusLO + 0] = (BYTE)(new_cluster);
+        entry[DIR_FstClusLO + 1] = (BYTE)(new_cluster >> 8);
+
+        entry[DIR_FileSize + 0] = 0;
+        entry[DIR_FileSize + 1] = 0;
+        entry[DIR_FileSize + 2] = 0;
+        entry[DIR_FileSize + 3] = 0;
+    }
+
+    fs->wflag = 1;
+
+    res = sync_fs(fs);
+
+cleanup:
+    FREE_NAMEBUFF();
+    return res;
 }
 
 
@@ -6320,9 +7109,6 @@ FRESULT f_mkfs (
         }
     }
 
-    /*
-        Сбрасываем нижний слой.
-    */
     if (disk_ioctl(pdrv, CTRL_SYNC, 0) != RES_OK) {
         return FR_DISK_ERR;
     }
