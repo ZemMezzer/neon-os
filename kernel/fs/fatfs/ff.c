@@ -2656,52 +2656,49 @@ static FRESULT dir_find (
     static WCHAR found_lfn[FF_MAX_LFN + 1];
     BYTE have_lfn = 0;
     BYTE lfn_checksum = 0;
+    BYTE expected_lfn_order = 0;
 #endif
 
-
     res = dir_sdi(dp, 0);
-
 
     if (res != FR_OK) {
         return res;
     }
 
 #if FF_USE_LFN
-
+    /*
+        dir_remove() relies on blk_ofs.  It must be the first LFN entry
+        only when the current object really has a valid LFN sequence.
+    */
+    dp->blk_ofs = 0xFFFFFFFF;
     neon_clear_lfn_buffer(found_lfn);
-
 #endif
 
     while (res == FR_OK) {
         BYTE first;
         BYTE attr;
 
-
         if (guard++ > 16384) {
             return FR_INT_ERR;
         }
 
-
         res = move_window(fs, dp->sect);
-
 
         if (res != FR_OK) {
             return res;
         }
 
-
         first = dp->dir[DIR_Name];
-
 
         if (first == 0) {
             return FR_NO_FILE;
         }
 
         if (first == DDEM) {
-
 #if FF_USE_LFN
             have_lfn = 0;
-
+            expected_lfn_order = 0;
+            dp->blk_ofs = 0xFFFFFFFF;
             neon_clear_lfn_buffer(found_lfn);
 #endif
 
@@ -2709,23 +2706,25 @@ static FRESULT dir_find (
             continue;
         }
 
-
         attr = dp->dir[DIR_Attr];
-
 
 #if FF_USE_LFN
         if ((attr & AM_MASK) == AM_LFN) {
             BYTE ord;
             BYTE logical_order;
 
-
             ord = dp->dir[LDIR_Ord];
             logical_order = ord & 0x1F;
 
-            if (logical_order == 0 || logical_order > 20) {
-
+            if (
+                logical_order == 0 ||
+                logical_order > (BYTE)((FF_MAX_LFN + 12) / 13) ||
+                dp->dir[LDIR_Type] != 0 ||
+                ld_16(dp->dir + LDIR_FstClusLO) != 0
+            ) {
                 have_lfn = 0;
-
+                expected_lfn_order = 0;
+                dp->blk_ofs = 0xFFFFFFFF;
                 neon_clear_lfn_buffer(found_lfn);
 
                 res = dir_next(dp, 0);
@@ -2733,35 +2732,51 @@ static FRESULT dir_find (
             }
 
             if (ord & LLEF) {
-
                 neon_clear_lfn_buffer(found_lfn);
 
                 have_lfn = 1;
                 lfn_checksum = dp->dir[LDIR_Chksum];
+                expected_lfn_order = logical_order;
+
+                /*
+                    The LLE entry is physically the first record in the
+                    LFN chain.  Remember it for safe deletion later.
+                */
+                dp->blk_ofs = dp->dptr;
             }
 
-            if (have_lfn) {
+            if (
+                !have_lfn ||
+                dp->dir[LDIR_Chksum] != lfn_checksum ||
+                logical_order != expected_lfn_order
+            ) {
+                have_lfn = 0;
+                expected_lfn_order = 0;
+                dp->blk_ofs = 0xFFFFFFFF;
+                neon_clear_lfn_buffer(found_lfn);
 
-                neon_copy_lfn_part_from_entry(
-                    found_lfn,
-                    (const volatile BYTE*)dp->dir,
-                    logical_order
-                );
-
+                res = dir_next(dp, 0);
+                continue;
             }
 
+            neon_copy_lfn_part_from_entry(
+                found_lfn,
+                (const volatile BYTE*)dp->dir,
+                logical_order
+            );
+
+            expected_lfn_order--;
 
             res = dir_next(dp, 0);
-
-
             continue;
         }
 #endif
 
         if (attr & AM_VOL) {
-
 #if FF_USE_LFN
             have_lfn = 0;
+            expected_lfn_order = 0;
+            dp->blk_ofs = 0xFFFFFFFF;
             neon_clear_lfn_buffer(found_lfn);
 #endif
 
@@ -2770,24 +2785,56 @@ static FRESULT dir_find (
         }
 
 #if FF_USE_LFN
-        if (have_lfn && fs->lfnbuf) {
-            BYTE real_checksum;
+        {
+            BYTE lfn_is_valid = 0;
 
+            if (
+                have_lfn &&
+                expected_lfn_order == 0 &&
+                neon_lfn_checksum(dp->dir) == lfn_checksum
+            ) {
+                lfn_is_valid = 1;
 
-            real_checksum = neon_lfn_checksum(dp->dir);
-
-
-            if (real_checksum == lfn_checksum) {
-
-                if (neon_lfn_equals(found_lfn, fs->lfnbuf)) {
+                if (fs->lfnbuf && neon_lfn_equals(found_lfn, fs->lfnbuf)) {
                     dp->obj.attr = attr & AM_MASK;
                     return FR_OK;
                 }
             }
+
+            /*
+                An SFN alias may be the name that was requested.  Keep
+                blk_ofs only when the preceding LFN sequence was valid;
+                otherwise dir_remove() must touch just this SFN record.
+            */
+            {
+                int same = 1;
+
+                for (UINT i = 0; i < 11; i++) {
+                    volatile BYTE a = dp->dir[DIR_Name + i];
+                    volatile BYTE b = dp->fn[i];
+
+                    if (a != b) {
+                        same = 0;
+                        break;
+                    }
+                }
+
+                if (same) {
+                    if (!lfn_is_valid) {
+                        dp->blk_ofs = 0xFFFFFFFF;
+                    }
+
+                    dp->obj.attr = attr & AM_MASK;
+                    return FR_OK;
+                }
+            }
+
+            have_lfn = 0;
+            expected_lfn_order = 0;
+            dp->blk_ofs = 0xFFFFFFFF;
+            neon_clear_lfn_buffer(found_lfn);
         }
-#endif
-
-
+#else
         {
             int same = 1;
 
@@ -2806,19 +2853,10 @@ static FRESULT dir_find (
                 return FR_OK;
             }
         }
-
-
-#if FF_USE_LFN
-        have_lfn = 0;
-
-        neon_clear_lfn_buffer(found_lfn);
 #endif
 
-
         res = dir_next(dp, 0);
-
     }
-
 
     return res;
 }
@@ -2966,40 +3004,179 @@ static FRESULT dir_register (
 /*-----------------------------------------------------------------------*/
 
 static FRESULT dir_remove (	/* FR_OK:Succeeded, FR_DISK_ERR:A disk error */
-	DIR* dp					/* Directory object pointing the entry to be removed */
+    DIR* dp					/* Directory object pointing the entry to be removed */
 )
 {
-	FRESULT res;
-	FATFS *fs = dp->obj.fs;
+    FRESULT res;
+    FATFS *fs = dp->obj.fs;
+
 #if FF_USE_LFN		/* LFN configuration */
-	DWORD last = dp->dptr;
+#if FF_FS_EXFAT
+    if (fs->fs_type == FS_EXFAT) {
+        DWORD last = dp->dptr;
 
-	res = (dp->blk_ofs == 0xFFFFFFFF) ? FR_OK : dir_sdi(dp, dp->blk_ofs);	/* Goto top of the entry block if LFN is exist */
-	if (res == FR_OK) {
-		do {
-			res = move_window(fs, dp->sect);
-			if (res != FR_OK) break;
-			if (FF_FS_EXFAT && fs->fs_type == FS_EXFAT) {	/* On the exFAT volume */
-				dp->dir[XDIR_Type] &= 0x7F;	/* Clear the entry InUse flag. */
-			} else {										/* On the FAT/FAT32 volume */
-				dp->dir[DIR_Name] = DDEM;	/* Mark the entry 'deleted'. */
-			}
-			fs->wflag = 1;
-			if (dp->dptr >= last) break;	/* If reached last entry then all entries of the object has been deleted. */
-			res = dir_next(dp, 0);	/* Next entry */
-		} while (res == FR_OK);
-		if (res == FR_NO_FILE) res = FR_INT_ERR;
-	}
-#else			/* Non LFN configuration */
+        res = (dp->blk_ofs == 0xFFFFFFFF) ? FR_OK : dir_sdi(dp, dp->blk_ofs);
 
-	res = move_window(fs, dp->sect);
-	if (res == FR_OK) {
-		dp->dir[DIR_Name] = DDEM;	/* Mark the entry 'deleted'.*/
-		fs->wflag = 1;
-	}
+        if (res == FR_OK) {
+            do {
+                res = move_window(fs, dp->sect);
+
+                if (res != FR_OK) {
+                    break;
+                }
+
+                dp->dir[XDIR_Type] &= 0x7F;
+                fs->wflag = 1;
+
+                if (dp->dptr >= last) {
+                    break;
+                }
+
+                res = dir_next(dp, 0);
+            } while (res == FR_OK);
+
+            if (res == FR_NO_FILE) {
+                res = FR_INT_ERR;
+            }
+        }
+
+        return res;
+    }
 #endif
 
-	return res;
+    /*
+        FAT/FAT32:
+        First validate the LFN chain before changing anything.  If its
+        offset is stale or malformed, delete only the SFN entry instead
+        of risking unrelated directory records.
+    */
+    {
+        DWORD last = dp->dptr;
+        DWORD start = last;
+        BYTE remove_lfn = 0;
+
+        if (dp->blk_ofs != 0xFFFFFFFF) {
+            DWORD count;
+            BYTE checksum;
+            BYTE expected_order;
+            DWORD offset;
+
+            if (
+                dp->blk_ofs < last &&
+                ((last - dp->blk_ofs) % SZDIRE) == 0
+            ) {
+                count = (last - dp->blk_ofs) / SZDIRE;
+
+                if (count > 0 && count <= (DWORD)((FF_MAX_LFN + 12) / 13)) {
+                    res = dir_sdi(dp, last);
+
+                    if (res != FR_OK) {
+                        return res;
+                    }
+
+                    res = move_window(fs, dp->sect);
+
+                    if (res != FR_OK) {
+                        return res;
+                    }
+
+                    checksum = neon_lfn_checksum(dp->dir);
+                    expected_order = (BYTE)count;
+                    remove_lfn = 1;
+
+                    for (offset = dp->blk_ofs; offset < last; offset += SZDIRE) {
+                        BYTE ord;
+                        BYTE attr;
+
+                        res = dir_sdi(dp, offset);
+
+                        if (res != FR_OK) {
+                            return res;
+                        }
+
+                        res = move_window(fs, dp->sect);
+
+                        if (res != FR_OK) {
+                            return res;
+                        }
+
+                        attr = dp->dir[DIR_Attr] & AM_MASK;
+                        ord = dp->dir[LDIR_Ord];
+
+                        if (
+                            attr != AM_LFN ||
+                            (ord & 0x1F) != expected_order ||
+                            dp->dir[LDIR_Chksum] != checksum ||
+                            dp->dir[LDIR_Type] != 0 ||
+                            ld_16(dp->dir + LDIR_FstClusLO) != 0
+                        ) {
+                            remove_lfn = 0;
+                            break;
+                        }
+
+                        if (offset == dp->blk_ofs) {
+                            if ((ord & LLEF) == 0) {
+                                remove_lfn = 0;
+                                break;
+                            }
+                        } else {
+                            if (ord & LLEF) {
+                                remove_lfn = 0;
+                                break;
+                            }
+                        }
+
+                        expected_order--;
+                    }
+
+                    if (expected_order != 0) {
+                        remove_lfn = 0;
+                    }
+
+                    if (remove_lfn) {
+                        start = dp->blk_ofs;
+                    }
+                }
+            }
+        }
+
+        for (;;) {
+            res = dir_sdi(dp, start);
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            res = move_window(fs, dp->sect);
+
+            if (res != FR_OK) {
+                return res;
+            }
+
+            dp->dir[DIR_Name] = DDEM;
+            fs->wflag = 1;
+
+            if (start >= last) {
+                break;
+            }
+
+            start += SZDIRE;
+        }
+    }
+
+    return FR_OK;
+
+#else			/* Non LFN configuration */
+
+    res = move_window(fs, dp->sect);
+
+    if (res == FR_OK) {
+        dp->dir[DIR_Name] = DDEM;	/* Mark the entry 'deleted'.*/
+        fs->wflag = 1;
+    }
+
+    return res;
+#endif
 }
 
 #endif /* !FF_FS_READONLY && FF_FS_MINIMIZE == 0 */

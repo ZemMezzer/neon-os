@@ -23,7 +23,7 @@
 #define FF_DEFINED	80386	/* Revision ID */
 
 #ifdef __cplusplus
-extern "C" {
+extern "C" { 
 #endif
 
 #if !defined(FFCONF_DEF)
