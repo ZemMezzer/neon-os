@@ -1,7 +1,6 @@
 #include <stdint.h>
 
 #include "input.h"
-#include "uart.h"
 #include "virtio_mmio.h"
 
 #define KEY_CAPSLOCK 58
@@ -288,13 +287,10 @@ static int virtio_keyboard_init(void) {
     VirtioMMIODevice dev;
 
     if (!virtio_mmio_find_device(VIRTIO_INPUT_DEVICE_ID, &dev)) {
-        uart_puts("virtio keyboard not found\n");
         return 0;
     }
 
     keyboard_base = dev.base;
-
-    uart_puts("virtio keyboard found\n");
 
     virtio_set_status(0);
     memory_barrier();
@@ -312,7 +308,6 @@ static int virtio_keyboard_init(void) {
     uint32_t max_queue_size = mmio_read32(keyboard_base + VIRTIO_MMIO_QUEUE_NUM_MAX);
 
     if (max_queue_size < VIRTQ_SIZE) {
-        uart_puts("virtio keyboard queue too small\n");
         virtio_add_status(VIRTIO_STATUS_FAILED);
         return 0;
     }
@@ -352,8 +347,6 @@ static int virtio_keyboard_init(void) {
     memory_barrier();
 
     virtqueue_notify();
-
-    uart_puts("virtio keyboard ready\n");
 
     return 1;
 }

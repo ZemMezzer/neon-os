@@ -1,6 +1,6 @@
 target_sources(objects PRIVATE
-    input.c
-    virtio_mmio.c
+    diskio.c
+    ff.c
 )
 
 target_include_directories(objects PUBLIC

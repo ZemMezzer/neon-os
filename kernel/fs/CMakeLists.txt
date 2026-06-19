@@ -1,8 +1,5 @@
-target_sources(objects PRIVATE
-    input.c
-    virtio_mmio.c
-)
-
 target_include_directories(objects PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+add_subdirectory(fatfs)

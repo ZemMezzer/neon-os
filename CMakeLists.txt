@@ -12,6 +12,8 @@ target_compile_options(objects PRIVATE
     -Wextra
     -O2
     -ffreestanding
+    -fno-builtin
+    -fno-tree-loop-distribute-patterns
     -nostdlib
     -nostartfiles
 )
@@ -34,6 +36,8 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -Wextra
     -O2
     -ffreestanding
+    -fno-builtin
+    -fno-tree-loop-distribute-patterns
     -nostdlib
     -nostartfiles
 )

@@ -3,9 +3,11 @@ target_sources(objects PRIVATE
 )
 
 target_include_directories(objects PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 add_subdirectory(gfx)
 add_subdirectory(console)
 add_subdirectory(input)
+add_subdirectory(fs)
+add_subdirectory(std)
