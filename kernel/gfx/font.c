@@ -1,6 +1,41 @@
+#include <stdint.h>
+
 #include "font.h"
 
 static const uint8_t FONT_SPACE[5] = {0x00,0x00,0x00,0x00,0x00};
+
+static const uint8_t FONT_BANG[5]         = {0x00,0x00,0x5F,0x00,0x00};
+static const uint8_t FONT_DOUBLE_QUOTE[5] = {0x00,0x07,0x00,0x07,0x00};
+static const uint8_t FONT_HASH[5]         = {0x14,0x7F,0x14,0x7F,0x14};
+static const uint8_t FONT_DOLLAR[5]       = {0x24,0x2A,0x7F,0x2A,0x12};
+static const uint8_t FONT_PERCENT[5]      = {0x23,0x13,0x08,0x64,0x62};
+static const uint8_t FONT_CARET[5]        = {0x04,0x02,0x01,0x02,0x04};
+static const uint8_t FONT_AMPERSAND[5]    = {0x36,0x49,0x55,0x22,0x50};
+static const uint8_t FONT_SINGLE_QUOTE[5] = {0x00,0x05,0x03,0x00,0x00};
+static const uint8_t FONT_LPAREN[5]       = {0x00,0x1C,0x22,0x41,0x00};
+static const uint8_t FONT_RPAREN[5]       = {0x00,0x41,0x22,0x1C,0x00};
+static const uint8_t FONT_ASTERISK[5]     = {0x14,0x08,0x3E,0x08,0x14};
+static const uint8_t FONT_PLUS[5]         = {0x08,0x08,0x3E,0x08,0x08};
+static const uint8_t FONT_COMMA[5]        = {0x00,0x50,0x30,0x00,0x00};
+static const uint8_t FONT_DASH[5]         = {0x08,0x08,0x08,0x08,0x08};
+static const uint8_t FONT_DOT[5]          = {0x00,0x60,0x60,0x00,0x00};
+static const uint8_t FONT_SLASH[5]        = {0x20,0x10,0x08,0x04,0x02};
+static const uint8_t FONT_COLON[5]        = {0x00,0x36,0x36,0x00,0x00};
+static const uint8_t FONT_SEMICOLON[5]    = {0x00,0x56,0x36,0x00,0x00};
+static const uint8_t FONT_LESS[5]         = {0x08,0x14,0x22,0x41,0x00};
+static const uint8_t FONT_EQUAL[5]        = {0x14,0x14,0x14,0x14,0x14};
+static const uint8_t FONT_GREATER[5]      = {0x00,0x41,0x22,0x14,0x08};
+static const uint8_t FONT_QUESTION[5]     = {0x02,0x01,0x51,0x09,0x06};
+static const uint8_t FONT_AT[5]           = {0x32,0x49,0x79,0x41,0x3E};
+static const uint8_t FONT_LBRACKET[5]     = {0x00,0x7F,0x41,0x41,0x00};
+static const uint8_t FONT_BACKSLASH[5]    = {0x02,0x04,0x08,0x10,0x20};
+static const uint8_t FONT_RBRACKET[5]     = {0x00,0x41,0x41,0x7F,0x00};
+static const uint8_t FONT_UNDERSCORE[5]   = {0x40,0x40,0x40,0x40,0x40};
+static const uint8_t FONT_BACKTICK[5]     = {0x00,0x01,0x02,0x04,0x00};
+static const uint8_t FONT_LBRACE[5]       = {0x00,0x08,0x36,0x41,0x00};
+static const uint8_t FONT_PIPE[5]         = {0x00,0x00,0x7F,0x00,0x00};
+static const uint8_t FONT_RBRACE[5]       = {0x00,0x41,0x36,0x08,0x00};
+static const uint8_t FONT_TILDE[5]        = {0x08,0x04,0x08,0x10,0x08};
 
 static const uint8_t FONT_0[5] = {0x3E,0x51,0x49,0x45,0x3E};
 static const uint8_t FONT_1[5] = {0x00,0x42,0x7F,0x40,0x00};
@@ -67,13 +102,42 @@ static const uint8_t FONT_x[5] = {0x44,0x28,0x10,0x28,0x44};
 static const uint8_t FONT_y[5] = {0x0C,0x50,0x50,0x50,0x3C};
 static const uint8_t FONT_z[5] = {0x44,0x64,0x54,0x4C,0x44};
 
-static const uint8_t FONT_DOT[5]   = {0x00,0x60,0x60,0x00,0x00};
-static const uint8_t FONT_COLON[5] = {0x00,0x36,0x36,0x00,0x00};
-static const uint8_t FONT_DASH[5]  = {0x08,0x08,0x08,0x08,0x08};
-
 const uint8_t* font_get_glyph(char c) {
     switch (c) {
         case ' ': return FONT_SPACE;
+
+        case '!': return FONT_BANG;
+        case '"': return FONT_DOUBLE_QUOTE;
+        case '#': return FONT_HASH;
+        case '$': return FONT_DOLLAR;
+        case '%': return FONT_PERCENT;
+        case '^': return FONT_CARET;
+        case '&': return FONT_AMPERSAND;
+        case '\'': return FONT_SINGLE_QUOTE;
+        case '(': return FONT_LPAREN;
+        case ')': return FONT_RPAREN;
+        case '*': return FONT_ASTERISK;
+        case '+': return FONT_PLUS;
+        case ',': return FONT_COMMA;
+        case '-': return FONT_DASH;
+        case '.': return FONT_DOT;
+        case '/': return FONT_SLASH;
+        case ':': return FONT_COLON;
+        case ';': return FONT_SEMICOLON;
+        case '<': return FONT_LESS;
+        case '=': return FONT_EQUAL;
+        case '>': return FONT_GREATER;
+        case '?': return FONT_QUESTION;
+        case '@': return FONT_AT;
+        case '[': return FONT_LBRACKET;
+        case '\\': return FONT_BACKSLASH;
+        case ']': return FONT_RBRACKET;
+        case '_': return FONT_UNDERSCORE;
+        case '`': return FONT_BACKTICK;
+        case '{': return FONT_LBRACE;
+        case '|': return FONT_PIPE;
+        case '}': return FONT_RBRACE;
+        case '~': return FONT_TILDE;
 
         case '0': return FONT_0;
         case '1': return FONT_1;
@@ -139,10 +203,6 @@ const uint8_t* font_get_glyph(char c) {
         case 'x': return FONT_x;
         case 'y': return FONT_y;
         case 'z': return FONT_z;
-
-        case '.': return FONT_DOT;
-        case ':': return FONT_COLON;
-        case '-': return FONT_DASH;
 
         default: return FONT_SPACE;
     }

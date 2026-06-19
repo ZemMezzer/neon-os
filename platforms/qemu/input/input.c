@@ -54,6 +54,7 @@
 #define KEY_EQUAL      13
 #define KEY_BACKSPACE  14
 #define KEY_TAB        15
+
 #define KEY_Q          16
 #define KEY_W          17
 #define KEY_E          18
@@ -64,7 +65,11 @@
 #define KEY_I          23
 #define KEY_O          24
 #define KEY_P          25
+
+#define KEY_LEFTBRACE  26
+#define KEY_RIGHTBRACE 27
 #define KEY_ENTER      28
+
 #define KEY_A          30
 #define KEY_S          31
 #define KEY_D          32
@@ -74,6 +79,14 @@
 #define KEY_J          36
 #define KEY_K          37
 #define KEY_L          38
+
+#define KEY_SEMICOLON  39
+#define KEY_APOSTROPHE 40
+#define KEY_GRAVE      41
+
+#define KEY_LEFTSHIFT  42
+#define KEY_BACKSLASH  43
+
 #define KEY_Z          44
 #define KEY_X          45
 #define KEY_C          46
@@ -81,16 +94,35 @@
 #define KEY_B          48
 #define KEY_N          49
 #define KEY_M          50
-#define KEY_SPACE      57
-#define KEY_LEFTSHIFT  42
-#define KEY_RIGHTSHIFT 54
 
-#define ALIGN_UP_VALUE(value, align) (((value) + ((align) - 1)) & ~((align) - 1))
+#define KEY_COMMA      51
+#define KEY_DOT        52
+#define KEY_SLASH      53
+
+#define KEY_RIGHTSHIFT 54
+#define KEY_SPACE      57
+
+#define KEY_102ND      86
+
+#define KEY_HOME       102
+#define KEY_UP         103
+#define KEY_PAGEUP     104
+#define KEY_LEFT       105
+#define KEY_RIGHT      106
+#define KEY_END        107
+#define KEY_DOWN       108
+#define KEY_PAGEDOWN   109
+#define KEY_INSERT     110
+#define KEY_DELETE     111
+
+#define ALIGN_UP_VALUE(value, align) \
+    (((value) + ((align) - 1)) & ~((align) - 1))
 
 #define VIRTQ_DESC_OFFSET 0
 #define VIRTQ_AVAIL_OFFSET (16 * VIRTQ_SIZE)
 #define VIRTQ_AVAIL_SIZE (4 + 2 * VIRTQ_SIZE)
-#define VIRTQ_USED_OFFSET ALIGN_UP_VALUE(VIRTQ_AVAIL_OFFSET + VIRTQ_AVAIL_SIZE, VIRTQ_ALIGN)
+#define VIRTQ_USED_OFFSET \
+    ALIGN_UP_VALUE(VIRTQ_AVAIL_OFFSET + VIRTQ_AVAIL_SIZE, VIRTQ_ALIGN)
 
 typedef struct {
     uint64_t addr;
@@ -127,7 +159,8 @@ static int keyboard_ready = 0;
 static int keyboard_init_tried = 0;
 
 static uint8_t virtqueue_mem[8192] __attribute__((aligned(4096)));
-static volatile VirtioInputEvent event_buffers[VIRTQ_SIZE] __attribute__((aligned(16)));
+static volatile VirtioInputEvent
+    event_buffers[VIRTQ_SIZE] __attribute__((aligned(16)));
 
 static uint16_t last_used_idx = 0;
 static int shift_pressed = 0;
@@ -151,15 +184,18 @@ static void memory_barrier(void) {
 }
 
 static volatile VirtqDesc* virtq_desc(void) {
-    return (volatile VirtqDesc*)(void*)(virtqueue_mem + VIRTQ_DESC_OFFSET);
+    return (volatile VirtqDesc*)(void*)
+        (virtqueue_mem + VIRTQ_DESC_OFFSET);
 }
 
 static volatile VirtqAvail* virtq_avail(void) {
-    return (volatile VirtqAvail*)(void*)(virtqueue_mem + VIRTQ_AVAIL_OFFSET);
+    return (volatile VirtqAvail*)(void*)
+        (virtqueue_mem + VIRTQ_AVAIL_OFFSET);
 }
 
 static volatile VirtqUsed* virtq_used(void) {
-    return (volatile VirtqUsed*)(void*)(virtqueue_mem + VIRTQ_USED_OFFSET);
+    return (volatile VirtqUsed*)(void*)
+        (virtqueue_mem + VIRTQ_USED_OFFSET);
 }
 
 static void zero_memory(void* ptr, uint32_t size) {
@@ -184,7 +220,6 @@ static void virtio_add_status(uint32_t status) {
 
 static void virtqueue_add_buffer(uint16_t descriptor_id) {
     volatile VirtqAvail* avail = virtq_avail();
-
     uint16_t idx = avail->idx;
 
     avail->ring[idx % VIRTQ_SIZE] = descriptor_id;
@@ -244,6 +279,22 @@ static char keycode_to_char(uint16_t code) {
 
         case KEY_MINUS: return shift_pressed ? '_' : '-';
         case KEY_EQUAL: return shift_pressed ? '+' : '=';
+
+        case KEY_LEFTBRACE: return shift_pressed ? '{' : '[';
+        case KEY_RIGHTBRACE: return shift_pressed ? '}' : ']';
+
+        case KEY_SEMICOLON: return shift_pressed ? ':' : ';';
+        case KEY_APOSTROPHE: return shift_pressed ? '"' : '\'';
+        case KEY_GRAVE: return shift_pressed ? '~' : '`';
+
+        case KEY_BACKSLASH: return shift_pressed ? '|' : '\\';
+
+        case KEY_COMMA: return shift_pressed ? '<' : ',';
+        case KEY_DOT: return shift_pressed ? '>' : '.';
+        case KEY_SLASH: return shift_pressed ? '?' : '/';
+
+        case KEY_102ND: return shift_pressed ? '>' : '<';
+
         case KEY_SPACE: return ' ';
         case KEY_ENTER: return '\n';
         case KEY_BACKSPACE: return '\b';
@@ -254,13 +305,56 @@ static char keycode_to_char(uint16_t code) {
     }
 }
 
+static int handle_special_key(uint16_t code) {
+    if (code == KEY_LEFT) {
+        input_push_key(INPUT_KEY_LEFT);
+        return 1;
+    }
+
+    if (code == KEY_RIGHT) {
+        input_push_key(INPUT_KEY_RIGHT);
+        return 1;
+    }
+
+    if (code == KEY_UP) {
+        input_push_key(INPUT_KEY_UP);
+        return 1;
+    }
+
+    if (code == KEY_DOWN) {
+        input_push_key(INPUT_KEY_DOWN);
+        return 1;
+    }
+
+    if (code == KEY_HOME) {
+        input_push_key(INPUT_KEY_HOME);
+        return 1;
+    }
+
+    if (code == KEY_END) {
+        input_push_key(INPUT_KEY_END);
+        return 1;
+    }
+
+    if (code == KEY_DELETE) {
+        input_push_key(INPUT_KEY_DELETE);
+        return 1;
+    }
+
+    return 0;
+}
+
 static void handle_input_event(volatile VirtioInputEvent* event) {
+    uint16_t code;
+    int32_t value;
+    char ch;
+
     if (event->type != EV_KEY) {
         return;
     }
 
-    uint16_t code = event->code;
-    int32_t value = event->value;
+    code = event->code;
+    value = event->value;
 
     if (code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT) {
         shift_pressed = value != 0;
@@ -272,11 +366,20 @@ static void handle_input_event(volatile VirtioInputEvent* event) {
         return;
     }
 
+    /*
+        0 = released
+        1 = pressed
+        2 = auto-repeat
+    */
     if (value != 1 && value != 2) {
         return;
     }
 
-    char ch = keycode_to_char(code);
+    if (handle_special_key(code)) {
+        return;
+    }
+
+    ch = keycode_to_char(code);
 
     if (ch != 0) {
         input_push_char(ch);
@@ -285,6 +388,9 @@ static void handle_input_event(volatile VirtioInputEvent* event) {
 
 static int virtio_keyboard_init(void) {
     VirtioMMIODevice dev;
+    uint32_t max_queue_size;
+    volatile VirtqDesc* desc;
+    volatile VirtqAvail* avail;
 
     if (!virtio_mmio_find_device(VIRTIO_INPUT_DEVICE_ID, &dev)) {
         return 0;
@@ -305,7 +411,9 @@ static int virtio_keyboard_init(void) {
 
     mmio_write32(keyboard_base + VIRTIO_MMIO_QUEUE_SEL, 0);
 
-    uint32_t max_queue_size = mmio_read32(keyboard_base + VIRTIO_MMIO_QUEUE_NUM_MAX);
+    max_queue_size = mmio_read32(
+        keyboard_base + VIRTIO_MMIO_QUEUE_NUM_MAX
+    );
 
     if (max_queue_size < VIRTQ_SIZE) {
         virtio_add_status(VIRTIO_STATUS_FAILED);
@@ -314,8 +422,8 @@ static int virtio_keyboard_init(void) {
 
     zero_memory(virtqueue_mem, sizeof(virtqueue_mem));
 
-    volatile VirtqDesc* desc = virtq_desc();
-    volatile VirtqAvail* avail = virtq_avail();
+    desc = virtq_desc();
+    avail = virtq_avail();
 
     avail->flags = 0;
     avail->idx = 0;
@@ -331,6 +439,7 @@ static int virtio_keyboard_init(void) {
 
     mmio_write32(keyboard_base + VIRTIO_MMIO_QUEUE_NUM, VIRTQ_SIZE);
     mmio_write32(keyboard_base + VIRTIO_MMIO_QUEUE_ALIGN, VIRTQ_ALIGN);
+
     mmio_write32(
         keyboard_base + VIRTIO_MMIO_QUEUE_PFN,
         (uint32_t)((uintptr_t)virtqueue_mem >> 12)
@@ -352,6 +461,8 @@ static int virtio_keyboard_init(void) {
 }
 
 static void virtio_keyboard_update(void) {
+    volatile VirtqUsed* used;
+
     if (!keyboard_init_tried) {
         keyboard_init_tried = 1;
         keyboard_ready = virtio_keyboard_init();
@@ -361,7 +472,7 @@ static void virtio_keyboard_update(void) {
         return;
     }
 
-    volatile VirtqUsed* used = virtq_used();
+    used = virtq_used();
 
     memory_barrier();
 
