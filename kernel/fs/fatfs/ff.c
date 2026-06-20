@@ -2819,7 +2819,17 @@ static FRESULT dir_find (
                     }
                 }
 
-                if (same) {
+                /*
+                    When NS_LOSS is set, dp->fn is only a provisional 8.3
+                    alias for an LFN. It is not itself a requested name.
+                    Treating a matching provisional alias as a real match
+                    makes different long names with the same first eight
+                    characters look identical (for example FOLDER_ONE and
+                    FOLDER_TWO), which causes f_mkdir/f_open to return
+                    FR_EXIST before dir_register() can allocate a numbered
+                    alias.
+                */
+                if (same && (dp->fn[NSFLAG] & NS_LOSS) == 0) {
                     if (!lfn_is_valid) {
                         dp->blk_ofs = 0xFFFFFFFF;
                     }
@@ -2908,6 +2918,48 @@ static FRESULT dir_register (
         entry_count = lfn_entries + 1;
     } else {
         lfn_entries = 0;
+    }
+
+    /*
+        The SFN created by create_name() is only a provisional alias when
+        NS_LOSS is set. Find a free 8.3 alias and turn it into NAME~n before
+        creating the LFN chain. Without this, two different long names that
+        share the first 8.3 characters can write duplicate aliases or fail as
+        FR_EXIST.
+    */
+    if (need_lfn && (dp->fn[NSFLAG] & NS_LOSS) != 0) {
+        BYTE original_sfn[11];
+        BYTE name_flags;
+        WORD sequence;
+        int alias_found;
+
+        memcpy(original_sfn, dp->fn, sizeof(original_sfn));
+        name_flags = dp->fn[NSFLAG];
+        alias_found = 0;
+
+        for (sequence = 0; sequence < 100; sequence++) {
+            if (sequence != 0) {
+                gen_numname(dp->fn, original_sfn, lfn, sequence);
+            }
+
+            /* Temporarily allow dir_find() to compare the SFN alias. */
+            dp->fn[NSFLAG] = (BYTE)(name_flags & (BYTE)~NS_LOSS);
+            res = dir_find(dp);
+            dp->fn[NSFLAG] = name_flags;
+
+            if (res == FR_NO_FILE) {
+                alias_found = 1;
+                break;
+            }
+
+            if (res != FR_OK) {
+                return res;
+            }
+        }
+
+        if (!alias_found) {
+            return FR_DENIED;
+        }
     }
 
 

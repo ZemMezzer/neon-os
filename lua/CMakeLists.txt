@@ -54,3 +54,4 @@ target_include_directories(objects PUBLIC
 
 add_subdirectory(gfx)
 add_subdirectory(input)
+add_subdirectory(fs)

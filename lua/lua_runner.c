@@ -3,8 +3,6 @@
 #include "console.h"
 #include "stdlib.h"
 #include "lua_runner.h"
-#include "lua_gfx.h"
-#include "lua_input.h"
 #include "program_runtime.h"
 
 #include "ff.h"
@@ -12,6 +10,10 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+
+#include "lua_gfx.h"
+#include "lua_input.h"
+#include "lua_fs.h"
 
 #define LUA_RUNNER_ATTR __attribute__((noinline, used, optimize("O0")))
 
@@ -216,6 +218,10 @@ int lua_run_file(const char* path) {
             if input.any_pressed() then ... end
     */
     luaL_requiref(state, "input", luaopen_input, 1);
+    lua_pop(state, 1);
+
+    /* Built-in FatFs filesystem module: local fs = require("fs") */
+    luaL_requiref(state, "fs", luaopen_fs, 1);
     lua_pop(state, 1);
 
     status = lua_load(
