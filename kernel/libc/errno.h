@@ -1,9 +1,5 @@
 #pragma once
 
-/*
-    Minimal errno layer for NeonOS' freestanding libc.
-    Lua uses errno only to attach a readable cause to I/O and os failures.
-*/
 
 extern int errno;
 

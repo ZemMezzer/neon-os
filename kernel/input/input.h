@@ -22,15 +22,23 @@ typedef enum InputKey {
     INPUT_KEY_PAGE_UP,
     INPUT_KEY_PAGE_DOWN,
     INPUT_KEY_INSERT,
+
+    INPUT_KEY_F1,
     INPUT_KEY_F2,
+    INPUT_KEY_F3,
+    INPUT_KEY_F4,
+    INPUT_KEY_F5,
+    INPUT_KEY_F6,
+    INPUT_KEY_F7,
+    INPUT_KEY_F8,
+    INPUT_KEY_F9,
+    INPUT_KEY_F10,
+    INPUT_KEY_F11,
+    INPUT_KEY_F12,
+
     INPUT_KEY_ESCAPE
 } InputKey;
 
-/*
-    A snapshot of modifier state is stored with every queued key event.
-    That is important because Shift/Ctrl can be released before Lua reads
-    the queued character.
-*/
 typedef enum InputModifiers {
     INPUT_MOD_NONE  = 0,
     INPUT_MOD_SHIFT = 1 << 0,
@@ -45,15 +53,14 @@ typedef struct InputEvent {
     uint8_t modifiers;
 } InputEvent;
 
-/* Old helpers remain available for existing code. */
 void input_push_char(char ch);
 void input_push_key(InputKey key);
 
-/* New helpers used by the VirtIO keyboard driver. */
 void input_push_char_with_modifiers(char ch, uint8_t modifiers);
 void input_push_key_with_modifiers(InputKey key, uint8_t modifiers);
 
 int input_poll(InputEvent* event);
 
-/* The platform keyboard driver implements this. */
+int input_take_global_close_request(void);
+
 void input_update(void);

@@ -133,10 +133,6 @@ double floor(double value) {
         return value;
     }
 
-    /*
-        Outside this range, each representable double is already integral
-        at the granularity Lua can observe.
-    */
     if (
         value >= 9223372036854775808.0 ||
         value <= -9223372036854775808.0
@@ -207,9 +203,6 @@ double fmod(double x, double y) {
     integer_quotient = quotient < 0.0 ? ceil(quotient) : floor(quotient);
     remainder = x - integer_quotient * y;
 
-    /*
-        Keep the C fmod sign convention: the result follows x.
-    */
     if (remainder != 0.0) {
         if (x > 0.0 && remainder < 0.0) {
             remainder += fabs(y);
@@ -350,10 +343,6 @@ static double neon_math_log(double value) {
     term = z;
     sum = z;
 
-    /*
-        atanh-series:
-        ln(m) = 2 * (z + z^3/3 + z^5/5 + ...)
-    */
     for (denominator = 3; denominator <= 59; denominator += 2) {
         term *= z2;
         sum += term / (double)denominator;
@@ -613,9 +602,6 @@ static double neon_math_atan_series(double value) {
     double sum = value;
     int denominator;
 
-    /*
-        For |value| <= tan(pi/8), this alternating series converges fast.
-    */
     for (denominator = 3; denominator <= 31; denominator += 2) {
         term *= -value2;
         sum += term / (double)denominator;
@@ -718,9 +704,6 @@ double sqrt(double value) {
         exponent--;
     }
 
-    /*
-        A compact initial approximation followed by Newton iterations.
-    */
     guess = 0.41731 + 0.59016 * mantissa;
 
     for (i = 0; i < 8; i++) {

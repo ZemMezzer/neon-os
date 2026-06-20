@@ -34,9 +34,5 @@ size_t strftime(
     const struct tm* time_info
 );
 
-/*
-    NeonOS currently has no RTC-backed wall clock. The kernel can call this
-    when it acquires a real epoch value from an RTC, network source, or user.
-*/
 void neon_time_set_epoch(time_t seconds_since_1970);
 void neon_time_advance_seconds(time_t seconds);

@@ -5,12 +5,6 @@
 
 #define SECONDS_PER_DAY 86400LL
 
-/*
-    The ARM64 generic counter is a monotonic hardware timer provided by QEMU
-    and by Raspberry Pi-class ARM platforms. Reading it does not require an
-    IRQ handler, so Lua os.clock() can advance immediately even before the
-    kernel has a scheduler or timer interrupts.
-*/
 static uint64_t neon_timer_frequency = 0;
 static uint64_t neon_timer_boot_counter = 0;
 static uint64_t neon_timer_epoch_counter = 0;
@@ -51,11 +45,6 @@ static void neon_timer_ensure_ready(void) {
 
     neon_timer_frequency = neon_timer_read_frequency();
 
-    /*
-        cntfrq_el0 is defined by the ARM generic timer. The fallback only
-        keeps this libc usable on a non-ARM test build; real NeonOS targets
-        should always report a non-zero counter frequency.
-    */
     if (neon_timer_frequency == 0) {
         neon_timer_frequency = 1000000ULL;
     }
@@ -89,10 +78,6 @@ static clock_t neon_timer_ticks_to_clock(uint64_t ticks) {
 
     neon_timer_ensure_ready();
 
-    /*
-        Split the conversion into seconds and a remainder so multiplication by
-        CLOCKS_PER_SEC cannot overflow after a few days of uptime.
-    */
     whole_seconds = ticks / neon_timer_frequency;
     remainder = ticks % neon_timer_frequency;
 
@@ -398,7 +383,6 @@ static int neon_append_strftime_item(
             }
             return neon_append_decimal(output, output_size, position, year, 4, '0');
         default:
-            /* Lua validates format tokens before calling strftime. */
             return neon_append_char(output, output_size, position, specifier);
     }
 }
@@ -412,11 +396,6 @@ void neon_time_set_epoch(time_t seconds_since_1970) {
 
 void neon_time_advance_seconds(time_t seconds) {
     neon_timer_ensure_ready();
-
-    /*
-        This remains useful for a future RTC synchronizer or manual time-set
-        command. It adjusts the epoch base without changing monotonic clock().
-    */
     neon_epoch_seconds += seconds;
 }
 
@@ -454,10 +433,6 @@ struct tm* gmtime(const time_t* value) {
 }
 
 struct tm* localtime(const time_t* value) {
-    /*
-        NeonOS currently has no timezone database. Local time equals UTC
-        until a timezone layer is added.
-    */
     return gmtime(value);
 }
 

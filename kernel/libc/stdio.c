@@ -161,10 +161,6 @@ static void stdio_reset_file_fields(FILE* stream, int index) {
         return;
     }
 
-    /*
-        Keep every store visible. This is also consistent with the older
-        stable stdio implementation in NeonOS.
-    */
     vstream = (volatile FILE*)stream;
 
     vstream->used = 0;
@@ -304,10 +300,6 @@ static int stdio_make_fat_path(const char* path, char* out, size_t out_size) {
 
     out[0] = '\0';
 
-    /*
-        Lua's default package.path starts with "./?.lua".
-        FatFs does not need that prefix, so normalize it here.
-    */
     while (
         path[input_position] == '.' &&
         (path[input_position + 1] == '/' || path[input_position + 1] == '\\')
@@ -732,10 +724,6 @@ size_t fread(void* ptr, size_t size, size_t count, FILE* stream) {
     }
 
     if (stdio_is_stdin(stream)) {
-        /*
-            Keyboard-backed stdin is not wired to the C FILE layer yet.
-            Lua io.read() will return EOF instead of blocking the kernel.
-        */
         stream->eof = 1;
         return 0;
     }
@@ -1255,10 +1243,6 @@ int setvbuf(FILE* stream, char* buffer, int mode, size_t size) {
         return -1;
     }
 
-    /*
-        FatFs is already the backing store; NeonOS keeps this layer
-        unbuffered. Lua only needs the API contract and a success/failure.
-    */
     return 0;
 }
 

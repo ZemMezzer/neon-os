@@ -268,11 +268,6 @@ static size_t format_float_fixed(
     size_t length = 0;
     int carry = 0;
 
-    /*
-        A fixed decimal rendering for values above this range would need a
-        bignum. Lua's own number formatting uses %g, so render extreme values
-        in scientific notation instead.
-    */
     if (value > 18446744073709549568.0) {
         return 0;
     }
@@ -537,10 +532,6 @@ static size_t format_float_value(
         );
     }
 
-    /*
-        %g / %G: 'precision' means significant digits, not digits after the
-        decimal point. Lua's default number conversion uses this form.
-    */
     if (precision == 0) {
         precision = 1;
     }
@@ -836,10 +827,6 @@ static int format_vsnprintf_impl(
             length = FORMAT_LENGTH_J;
             format++;
         } else if (*format == 'L') {
-            /*
-                NeonOS currently uses double for Lua numbers. Accepting 'L'
-                keeps the parser aligned, but reads double below.
-            */
             length = FORMAT_LENGTH_L;
             format++;
         }
@@ -1073,10 +1060,6 @@ static int format_vsnprintf_impl(
             continue;
         }
 
-        /*
-            Preserve unknown specifiers visibly instead of consuming an
-            argument incorrectly.
-        */
         format_put(&output, '%');
         format_put(&output, specifier);
     }

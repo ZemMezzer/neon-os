@@ -68,9 +68,20 @@
 #define KEY_LEFTALT    56
 #define KEY_SPACE      57
 #define KEY_CAPSLOCK   58
+#define KEY_F1         59
 #define KEY_F2         60
+#define KEY_F3         61
+#define KEY_F4         62
+#define KEY_F5         63
+#define KEY_F6         64
+#define KEY_F7         65
+#define KEY_F8         66
+#define KEY_F9         67
+#define KEY_F10        68
 
 #define KEY_102ND      86
+#define KEY_F11        87
+#define KEY_F12        88
 #define KEY_RIGHTCTRL  97
 #define KEY_RIGHTALT   100
 
@@ -176,6 +187,8 @@ static int right_ctrl_pressed = 0;
 static int left_alt_pressed = 0;
 static int right_alt_pressed = 0;
 static int caps_lock_enabled = 0;
+
+static volatile int global_close_requested = 0;
 
 static int input_shift_pressed(void) {
     return left_shift_pressed || right_shift_pressed;
@@ -390,8 +403,22 @@ static int handle_special_key(uint16_t code, uint8_t modifiers) {
         return 1;
     }
 
-    if (code == KEY_F2) {
-        input_push_key_with_modifiers(INPUT_KEY_F2, modifiers);
+    if (code >= KEY_F1 && code <= KEY_F10) {
+        InputKey key = (InputKey)(
+            INPUT_KEY_F1 + (code - KEY_F1)
+        );
+
+        input_push_key_with_modifiers(key, modifiers);
+        return 1;
+    }
+
+    if (code == KEY_F11) {
+        input_push_key_with_modifiers(INPUT_KEY_F11, modifiers);
+        return 1;
+    }
+
+    if (code == KEY_F12) {
+        input_push_key_with_modifiers(INPUT_KEY_F12, modifiers);
         return 1;
     }
 
@@ -458,6 +485,15 @@ static void handle_input_event(volatile VirtioInputEvent* event) {
     }
 
     modifiers = input_current_modifiers();
+
+    if (
+        code == KEY_F4 &&
+        value == 1 &&
+        (modifiers & INPUT_MOD_ALT) != 0
+    ) {
+        global_close_requested = 1;
+        return;
+    }
 
     if (handle_special_key(code, modifiers)) {
         return;
@@ -582,4 +618,12 @@ static void virtio_keyboard_update(void) {
 
 void input_update(void) {
     virtio_keyboard_update();
+}
+
+int input_take_global_close_request(void) {
+    int requested = global_close_requested;
+
+    global_close_requested = 0;
+
+    return requested;
 }

@@ -1,8 +1,5 @@
 #pragma once
 
-/*
-    Minimal C locale API. NeonOS currently always uses the "C" locale.
-*/
 
 #define LC_ALL      0
 #define LC_COLLATE  1

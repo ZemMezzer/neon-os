@@ -43,10 +43,6 @@ static FRESULT builtin_apps_make_parent_directories(const char* file_path) {
         path[index] = file_path[index];
     }
 
-    /*
-        Bundled paths are generated as "0:/relative/path.lua". Starting
-        after "0:/" prevents an attempt to create the volume root itself.
-    */
     for (index = 3; index < length; index++) {
         FRESULT result;
         char saved;
@@ -132,7 +128,6 @@ FRESULT builtin_apps_install_if_needed(void) {
     static const unsigned char marker_contents[] =
         "NeonOS default Lua apps installed\n";
 
-    /* A completed install is never overwritten during an ordinary boot. */
     result = f_stat(BUILTIN_APPS_MARKER_PATH, &info);
 
     if (result == FR_OK) {
@@ -143,10 +138,6 @@ FRESULT builtin_apps_install_if_needed(void) {
         return result;
     }
 
-    /*
-        The marker is deliberately created last. If power is lost halfway
-        through this loop, the next boot repeats the installation safely.
-    */
     for (index = 0; index < neon_builtin_apps_count; index++) {
         const NeonBuiltinApp* app = &neon_builtin_apps[index];
 

@@ -27,11 +27,6 @@ static int console_cursor_drawn = 0;
 static int console_cursor_drawn_x = 0;
 static int console_cursor_drawn_y = 0;
 
-/*
-    A graphical program owns the framebuffer while this flag is set. The UART
-    remains usable for logs, but none of the terminal drawing paths may touch
-    the framebuffer.
-*/
 static int console_suspended = 0;
 static int suspended_cursor_visible = 0;
 
@@ -121,11 +116,6 @@ void console_suspend(void) {
         return;
     }
 
-    /*
-        Remove the old prompt and cursor before Lua starts drawing its frame.
-        This is what prevents a leftover '>' from remaining in an unused part
-        of the Lua screen.
-    */
     console_erase_drawn_cursor();
 
     suspended_cursor_visible = console_cursor_visible;
@@ -149,10 +139,6 @@ void console_resume(void) {
 
     console_suspended = 0;
 
-    /*
-        A Lua program has finished, so return to a fresh terminal canvas.
-        shell_enter() writes the next prompt immediately after this returns.
-    */
     cursor_x = 0;
     cursor_y = 0;
     console_cursor_drawn = 0;
@@ -295,7 +281,6 @@ void console_write(const char* text) {
         return;
     }
 
-    /* Keep serial logs available even while a graphical program is active. */
     uart_puts(text);
 
     if (console_suspended) {

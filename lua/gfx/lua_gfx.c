@@ -274,8 +274,6 @@ static int lua_gfx_present(lua_State* state) {
     (void)state;
 
     gfx_present();
-
-    /* Input may refresh once again on the next visual frame. */
     lua_input_frame_presented();
 
     return 0;

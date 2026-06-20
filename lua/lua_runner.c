@@ -1,6 +1,7 @@
 #include <stddef.h>
 
 #include "console.h"
+#include "input.h"
 #include "stdlib.h"
 #include "lua_runner.h"
 #include "program_runtime.h"
@@ -16,6 +17,8 @@
 #include "lua_fs.h"
 
 #define LUA_RUNNER_ATTR __attribute__((noinline, used, optimize("O0")))
+#define LUA_RUNNER_CLOSE_HOOK_INSTRUCTIONS 1024
+#define LUA_RUNNER_ALT_F4_EXIT_STATUS 0
 
 typedef struct LuaFileReader {
     FIL file;
@@ -50,6 +53,11 @@ static void neon_lua_print_error(
 static void lua_program_exit_handler(
     ProgramContext* program,
     int status
+) LUA_RUNNER_ATTR;
+
+static void lua_program_close_hook(
+    lua_State* state,
+    lua_Debug* debug
 ) LUA_RUNNER_ATTR;
 
 
@@ -149,15 +157,26 @@ static void lua_program_exit_handler(
         }
     }
 
-    /*
-        Do not jump across Lua frames directly. This error reaches the
-        lua_pcall() below through Lua's own protected-error mechanism.
-    */
     lua_pushlightuserdata(session->state, session);
     (void)lua_error(session->state);
 
     for (;;) {
         asm volatile("wfe");
+    }
+}
+
+
+static void lua_program_close_hook(
+    lua_State* state,
+    lua_Debug* debug
+) {
+    (void)state;
+    (void)debug;
+
+    input_update();
+
+    if (input_take_global_close_request()) {
+        program_exit(LUA_RUNNER_ALT_F4_EXIT_STATUS);
     }
 }
 
@@ -228,29 +247,14 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
         return LUA_RUNNER_ERR_STATE_CREATE;
     }
 
-    /*
-        Standard Lua libraries call ordinary C functions supplied by
-        NeonOS libc and the generic program runtime.
-    */
     luaL_openlibs(state);
 
-    /*
-        Register the built-in framebuffer module. luaL_requiref also places
-        it into package.loaded, so Lua scripts can simply use:
-            local gfx = require("gfx")
-    */
     luaL_requiref(state, "gfx", luaopen_gfx, 1);
     lua_pop(state, 1);
 
-    /*
-        Register keyboard polling for Lua programs:
-            local input = require("input")
-            if input.any_pressed() then ... end
-    */
     luaL_requiref(state, "input", luaopen_input, 1);
     lua_pop(state, 1);
 
-    /* Built-in FatFs filesystem module: local fs = require("fs") */
     luaL_requiref(state, "fs", luaopen_fs, 1);
     lua_pop(state, 1);
 
@@ -288,11 +292,15 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
         &session
     );
 
-    /*
-        The Lua application owns the framebuffer for the duration of pcall.
-        The console is blanked and made draw-inactive, so old prompts, the
-        blinking cursor, and Lua print output cannot overwrite GFX pixels.
-    */
+    (void)input_take_global_close_request();
+
+    lua_sethook(
+        state,
+        lua_program_close_hook,
+        LUA_MASKCOUNT,
+        LUA_RUNNER_CLOSE_HOOK_INSTRUCTIONS
+    );
+
     console_suspend();
 
     for (int index = 0; index < argc; index++) {
@@ -304,17 +312,11 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
 
     status = lua_pcall(state, argc, LUA_MULTRET, 0);
 
-    /*
-        Return to a clean terminal before reporting a Lua error or allowing
-        the shell to draw its next prompt.
-    */
+    lua_sethook(state, NULL, 0, 0);
+
     console_resume();
 
     if (program_context_exit_requested(&session.program)) {
-        /*
-            exit() raised a Lua error intentionally. Do not print that
-            internal marker; close the finished state and return its status.
-        */
         exit_status = program_context_exit_status(&session.program);
 
         lua_settop(state, 0);

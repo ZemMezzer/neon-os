@@ -1,12 +1,5 @@
 #pragma once
 
-/*
-    Bare-metal double-precision math API used by Lua and NeonOS.
-
-    It provides the C99 functions needed by Lua's standard math library.
-    The implementation is freestanding and does not depend on libm.
-*/
-
 #define HUGE_VAL  __builtin_huge_val()
 #define HUGE_VALF __builtin_huge_valf()
 #define HUGE_VALL __builtin_huge_vall()

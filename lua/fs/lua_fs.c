@@ -7,11 +7,6 @@
 #include "lauxlib.h"
 
 
-/*
-    The FatFs configuration used by NeonOS has FF_MAX_LFN == 255. A 512-byte
-    path buffer leaves room for a volume prefix and several nested components
-    while keeping recursive copy/delete stack usage bounded.
-*/
 #define LUA_FS_PATH_CAPACITY 512
 #define LUA_FS_COPY_BUFFER_SIZE 512
 #define LUA_FS_MAX_RECURSION 24
@@ -36,8 +31,6 @@ static int lua_fs_is_separator(char c) {
     return c == '/' || c == '\\';
 }
 
-
-/* FatFs may expose physical navigation entries in a directory listing. */
 static int lua_fs_is_dot_entry(const char* name) {
     if (name == NULL) {
         return 0;
@@ -192,8 +185,6 @@ static int lua_fs_paths_equal(const char* left, const char* right) {
     return 1;
 }
 
-
-/* Return true when child is lexically located inside parent. */
 static int lua_fs_path_is_child_of(const char* parent, const char* child) {
     size_t parent_length;
     size_t child_length;
@@ -205,7 +196,6 @@ static int lua_fs_path_is_child_of(const char* parent, const char* child) {
     parent_length = lua_fs_strlen(parent);
     child_length = lua_fs_strlen(child);
 
-    /* A bare "/" is a root path and is parent of every absolute child. */
     if (
         parent_length == 1 &&
         lua_fs_is_separator(parent[0]) &&
@@ -375,11 +365,6 @@ static int lua_fs_list(lua_State* state) {
     return 1;
 }
 
-
-/*
-    listInfo() is not required by CC compatibility, but it saves Explorer from
-    calling isDir() and getSize() once for every item.
-*/
 static int lua_fs_list_info(lua_State* state) {
     const char* path;
     DIR directory;
@@ -927,7 +912,6 @@ static int lua_fs_get_dir(lua_State* state) {
     end = index - 1;
 
     if (end == 2 && path[1] == ':') {
-        /* Preserve the root slash in e.g. "0:/file.txt". */
         lua_pushlstring(state, path, 3);
         return 1;
     }

@@ -5,17 +5,6 @@
 
 #include "lauxlib.h"
 
-/*
-    Keep this module deliberately small while the input path is being
-    stabilized. The kernel input queue remains the only FIFO. Lua caches at
-    most one event for a visual frame, avoiding an additional queue, event
-    shifting, and dynamic Lua string creation for every pressed key.
-
-    input.poll_latest() is intended for real-time games. Unlike input.poll(),
-    it drains the current driver queue and returns only the newest key. This
-    prevents keyboard auto-repeat events accumulated while a key was held
-    from continuing to move the player after the key has been released.
-*/
 #define LUA_INPUT_CODE_LEFT    0x100
 #define LUA_INPUT_CODE_RIGHT   0x101
 #define LUA_INPUT_CODE_UP      0x102
@@ -24,13 +13,36 @@
 #define LUA_INPUT_CODE_END     0x105
 #define LUA_INPUT_CODE_DELETE  0x106
 
+#define LUA_INPUT_CODE_F1      0x120
+#define LUA_INPUT_CODE_F2      0x121
+#define LUA_INPUT_CODE_F3      0x122
+#define LUA_INPUT_CODE_F4      0x123
+#define LUA_INPUT_CODE_F5      0x124
+#define LUA_INPUT_CODE_F6      0x125
+#define LUA_INPUT_CODE_F7      0x126
+#define LUA_INPUT_CODE_F8      0x127
+#define LUA_INPUT_CODE_F9      0x128
+#define LUA_INPUT_CODE_F10     0x129
+#define LUA_INPUT_CODE_F11     0x12A
+#define LUA_INPUT_CODE_F12     0x12B
+
 static InputEvent lua_input_frame_event;
 static int lua_input_frame_checked = 0;
 static int lua_input_frame_has_event = 0;
 
 
+static int lua_input_function_key_code(InputKey key) {
+    if (key >= INPUT_KEY_F1 && key <= INPUT_KEY_F12) {
+        return LUA_INPUT_CODE_F1 + (int)(key - INPUT_KEY_F1);
+    }
+
+    return 0;
+}
+
+
 static int lua_input_event_code(const InputEvent* event) {
     unsigned char character;
+    int function_key_code;
 
     if (event == NULL) {
         return 0;
@@ -39,9 +51,10 @@ static int lua_input_event_code(const InputEvent* event) {
     if (event->type == INPUT_EVENT_CHAR) {
         character = (unsigned char)event->ch;
 
-        /* Game/control bindings should not distinguish Q from Shift+Q. */
         if (character >= (unsigned char)'A' && character <= (unsigned char)'Z') {
-            character = (unsigned char)(character - (unsigned char)'A' + (unsigned char)'a');
+            character = (unsigned char)(
+                character - (unsigned char)'A' + (unsigned char)'a'
+            );
         }
 
         return (int)character;
@@ -79,15 +92,12 @@ static int lua_input_event_code(const InputEvent* event) {
         return LUA_INPUT_CODE_DELETE;
     }
 
-    return 0;
+    function_key_code = lua_input_function_key_code(event->key);
+
+    return function_key_code;
 }
 
 
-/*
-    At most one driver update happens in a frame. The first Lua input query
-    after gfx.present() fetches one item from the normal kernel queue; every
-    other Lua input query only looks at this cached item.
-*/
 static void lua_input_begin_frame_if_needed(void) {
     if (lua_input_frame_checked) {
         return;
@@ -103,8 +113,6 @@ static void lua_input_begin_frame_if_needed(void) {
     }
 }
 
-
-/* input.poll() -> integer | nil */
 static int lua_input_poll(lua_State* state) {
     int key_code;
 
@@ -128,15 +136,6 @@ static int lua_input_poll(lua_State* state) {
 }
 
 
-/*
-    input.poll_latest() -> integer | nil
-
-    Use this in real-time programs, such as games. The normal poll() API is
-    deliberately FIFO-based for editors and shells, but a FIFO lets keyboard
-    auto-repeat build up while a script is rendering. Here we consume the
-    cached event and every other currently pending driver event, retaining
-    only the newest usable key.
-*/
 static int lua_input_poll_latest(lua_State* state) {
     InputEvent event;
     int latest_key_code = 0;
@@ -171,7 +170,6 @@ static int lua_input_poll_latest(lua_State* state) {
 }
 
 
-/* input.any_pressed() -> boolean */
 static int lua_input_any_pressed(lua_State* state) {
     lua_input_begin_frame_if_needed();
 
@@ -186,16 +184,6 @@ static int lua_input_any_pressed(lua_State* state) {
 }
 
 
-/*
-    input.pressed(key_code) -> boolean
-
-    It does not discard an unrelated event. Thus a program may safely write:
-
-        if input.pressed(input.Q) then ... end
-        if input.pressed(input.LEFT) then ... end
-
-    Any non-matching event is discarded only at the next gfx.present().
-*/
 static int lua_input_pressed(lua_State* state) {
     lua_Integer wanted;
     int key_code;
@@ -249,6 +237,24 @@ static void lua_input_set_letter_constants(lua_State* state) {
 }
 
 
+static void lua_input_set_function_key_constants(lua_State* state) {
+    static const char* const names[] = {
+        "F1",  "F2",  "F3",  "F4",
+        "F5",  "F6",  "F7",  "F8",
+        "F9",  "F10", "F11", "F12"
+    };
+    unsigned int index;
+
+    for (index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        lua_input_set_constant(
+            state,
+            names[index],
+            LUA_INPUT_CODE_F1 + (int)index
+        );
+    }
+}
+
+
 static const luaL_Reg lua_input_functions[] = {
     { "poll",        lua_input_poll },
     { "poll_latest", lua_input_poll_latest },
@@ -260,7 +266,6 @@ static const luaL_Reg lua_input_functions[] = {
 
 
 void lua_input_frame_presented(void) {
-    /* Start a new input frame and discard an event the script ignored. */
     lua_input_frame_checked = 0;
     lua_input_frame_has_event = 0;
 }
@@ -273,6 +278,7 @@ int luaopen_input(lua_State* state) {
     luaL_newlib(state, lua_input_functions);
 
     lua_input_set_letter_constants(state);
+    lua_input_set_function_key_constants(state);
 
     lua_input_set_constant(state, "LEFT", LUA_INPUT_CODE_LEFT);
     lua_input_set_constant(state, "RIGHT", LUA_INPUT_CODE_RIGHT);

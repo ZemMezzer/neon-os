@@ -202,10 +202,6 @@ static void lua_shell_strip_trailing_slash(char* path) {
 }
 
 
-/*
-    PATH is system-global. './system' always means 0:/system, not a
-    directory relative to the shell's current working directory.
-*/
 static int lua_shell_path_entry_to_absolute(
     const char* entry,
     char* output,

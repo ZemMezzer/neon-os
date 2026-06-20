@@ -42,10 +42,6 @@ char* setlocale(int category, const char* locale) LOCALE_ATTR;
 char* setlocale(int category, const char* locale) {
     (void)category;
 
-    /*
-        NeonOS currently supports only the standard C locale.
-        setlocale(category, NULL) queries it; "C" and "" select it.
-    */
     if (!locale) {
         return locale_c_name;
     }

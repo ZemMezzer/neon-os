@@ -14,11 +14,6 @@
 
 typedef int (*ShellCommandFn)(int argc, char** argv);
 
-/*
-    Optional resolver for commands not registered as built-ins.
-    Return nonzero when the resolver handled argv; write the program
-    exit status to out_status.
-*/
 typedef int (*ShellCommandFallbackFn)(
     int argc,
     char** argv,
@@ -114,10 +109,6 @@ int shell_resolve_path(const char* input, char* out, int out_size) {
         return 0;
     }
 
-    /*
-        FatFs absolute path:
-        0:/Folder/File.txt
-    */
     if (input[0] >= '0' && input[0] <= '9' && input[1] == ':') {
         while (input[i]) {
             if (shell_append_char(out, out_size, &pos, input[i]) != 0) {
@@ -130,10 +121,6 @@ int shell_resolve_path(const char* input, char* out, int out_size) {
         return 0;
     }
 
-    /*
-        Unix-style absolute path:
-        /Folder/File.txt -> 0:/Folder/File.txt
-    */
     if (input[0] == '/' || input[0] == '\\') {
         if (shell_append_char(out, out_size, &pos, '0') != 0) {
             return -1;
@@ -154,10 +141,6 @@ int shell_resolve_path(const char* input, char* out, int out_size) {
         return 0;
     }
 
-    /*
-        Relative path:
-        file.txt -> cwd/file.txt
-    */
     cwd_len = shell_str_len(shell_cwd);
 
     for (i = 0; i < cwd_len; i++) {
@@ -656,10 +639,6 @@ int shell_commands_execute(const char* line) {
         }
     }
 
-    /*
-        Built-in commands always win. A registered subsystem can resolve
-        the remaining name, for example the Lua PATH launcher.
-    */
     if (command_fallback != NULL) {
         int fallback_status = 0;
 
@@ -676,10 +655,6 @@ int shell_commands_execute(const char* line) {
 }
 
 void shell_commands_init(void) {
-    /*
-        The generic runtime does not know the shell implementation.
-        The shell supplies its synchronous executor at initialization.
-    */
     program_set_command_executor(shell_commands_execute);
 
     shell_register_command("help", "show commands", cmd_help);

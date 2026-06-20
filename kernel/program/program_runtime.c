@@ -31,10 +31,6 @@ void program_context_leave(ProgramContext* context) {
         return;
     }
 
-    /*
-        Contexts are strictly nested. Do not accidentally detach a parent
-        if a program adapter leaves in the wrong order.
-    */
     if (active_program == context) {
         active_program = context->parent;
     }
@@ -67,10 +63,6 @@ void program_set_command_executor(ProgramCommandExecutor executor) {
 
 int program_execute_command(const char* command) {
     if (command == NULL) {
-        /*
-            Standard C uses system(NULL) as a "does a command processor
-            exist?" query. A registered shell is sufficient.
-        */
         return command_executor != NULL ? 1 : 0;
     }
 
@@ -96,25 +88,14 @@ void program_exit(int status) {
     context->exit_requested = 1;
     context->exit_status = status & 0xFF;
 
-    /*
-        The handler belongs to the active adapter. The Lua handler invokes
-        lua_error(); another program type can use a different unwinder.
-    */
     context->exit_handler(context, context->exit_status);
 
-    /*
-        An exit handler must not return.
-    */
     for (;;) {
         asm volatile("wfe");
     }
 }
 
 
-/*
-    C library compatibility surface used by loslib.c. These symbols belong
-    to the generic program runtime, not to Lua.
-*/
 int system(const char* command) {
     int status = program_execute_command(command);
 
@@ -132,10 +113,6 @@ void exit(int status) {
 
 
 char* getenv(const char* name) {
-    /*
-        A generic environment store can be added later. Returning NULL is
-        the normal libc answer for an undefined variable.
-    */
     (void)name;
     return NULL;
 }
