@@ -6,6 +6,14 @@ void console_putc(char c);
 void console_write(const char* text);
 void console_backspace(void);
 
+/*
+    Temporarily detach the text console from the framebuffer. While it is
+    suspended, console output is still mirrored to UART, but it cannot draw
+    over a graphical program.
+*/
+void console_suspend(void);
+void console_resume(void);
+
 void console_cursor_enable(int enabled);
 void console_cursor_show(void);
 void console_cursor_hide(void);

@@ -3,6 +3,8 @@
 #include "console.h"
 #include "stdlib.h"
 #include "lua_runner.h"
+#include "lua_gfx.h"
+#include "lua_input.h"
 #include "program_runtime.h"
 
 #include "ff.h"
@@ -200,6 +202,22 @@ int lua_run_file(const char* path) {
     */
     luaL_openlibs(state);
 
+    /*
+        Register the built-in framebuffer module. luaL_requiref also places
+        it into package.loaded, so Lua scripts can simply use:
+            local gfx = require("gfx")
+    */
+    luaL_requiref(state, "gfx", luaopen_gfx, 1);
+    lua_pop(state, 1);
+
+    /*
+        Register keyboard polling for Lua programs:
+            local input = require("input")
+            if input.any_pressed() then ... end
+    */
+    luaL_requiref(state, "input", luaopen_input, 1);
+    lua_pop(state, 1);
+
     status = lua_load(
         state,
         neon_lua_file_reader,
@@ -231,7 +249,20 @@ int lua_run_file(const char* path) {
         &session
     );
 
+    /*
+        The Lua application owns the framebuffer for the duration of pcall.
+        The console is blanked and made draw-inactive, so old prompts, the
+        blinking cursor, and Lua print output cannot overwrite GFX pixels.
+    */
+    console_suspend();
+
     status = lua_pcall(state, 0, LUA_MULTRET, 0);
+
+    /*
+        Return to a clean terminal before reporting a Lua error or allowing
+        the shell to draw its next prompt.
+    */
+    console_resume();
 
     if (program_context_exit_requested(&session.program)) {
         /*

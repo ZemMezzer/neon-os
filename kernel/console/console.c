@@ -27,6 +27,14 @@ static int console_cursor_drawn = 0;
 static int console_cursor_drawn_x = 0;
 static int console_cursor_drawn_y = 0;
 
+/*
+    A graphical program owns the framebuffer while this flag is set. The UART
+    remains usable for logs, but none of the terminal drawing paths may touch
+    the framebuffer.
+*/
+static int console_suspended = 0;
+static int suspended_cursor_visible = 0;
+
 static void console_draw_cursor_at(int cell_x, int cell_y, unsigned int color) {
     int px;
     int py;
@@ -92,6 +100,10 @@ void console_init(void) {
 }
 
 void console_clear(void) {
+    if (console_suspended) {
+        return;
+    }
+
     gfx_clear(CONSOLE_BG);
 
     cursor_x = 0;
@@ -104,7 +116,63 @@ void console_clear(void) {
     gfx_present();
 }
 
+void console_suspend(void) {
+    if (console_suspended) {
+        return;
+    }
+
+    /*
+        Remove the old prompt and cursor before Lua starts drawing its frame.
+        This is what prevents a leftover '>' from remaining in an unused part
+        of the Lua screen.
+    */
+    console_erase_drawn_cursor();
+
+    suspended_cursor_visible = console_cursor_visible;
+    console_cursor_visible = 0;
+    console_cursor_ticks = 0;
+    console_cursor_drawn = 0;
+
+    console_suspended = 1;
+
+    cursor_x = 0;
+    cursor_y = 0;
+
+    gfx_clear(CONSOLE_BG);
+    gfx_present();
+}
+
+void console_resume(void) {
+    if (!console_suspended) {
+        return;
+    }
+
+    console_suspended = 0;
+
+    /*
+        A Lua program has finished, so return to a fresh terminal canvas.
+        shell_enter() writes the next prompt immediately after this returns.
+    */
+    cursor_x = 0;
+    cursor_y = 0;
+    console_cursor_drawn = 0;
+    console_cursor_ticks = 0;
+
+    console_cursor_visible = (
+        console_cursor_enabled && suspended_cursor_visible
+    ) ? 1 : 0;
+    suspended_cursor_visible = 0;
+
+    gfx_clear(CONSOLE_BG);
+    console_redraw_cursor_if_needed();
+    gfx_present();
+}
+
 void console_cursor_enable(int enabled) {
+    if (console_suspended) {
+        return;
+    }
+
     console_erase_drawn_cursor();
 
     console_cursor_enabled = enabled ? 1 : 0;
@@ -117,7 +185,7 @@ void console_cursor_enable(int enabled) {
 }
 
 void console_cursor_show(void) {
-    if (!console_cursor_enabled) {
+    if (console_suspended || !console_cursor_enabled) {
         return;
     }
 
@@ -132,6 +200,10 @@ void console_cursor_show(void) {
 }
 
 void console_cursor_hide(void) {
+    if (console_suspended) {
+        return;
+    }
+
     console_erase_drawn_cursor();
 
     console_cursor_visible = 0;
@@ -141,7 +213,7 @@ void console_cursor_hide(void) {
 }
 
 void console_cursor_update(void) {
-    if (!console_cursor_enabled) {
+    if (console_suspended || !console_cursor_enabled) {
         return;
     }
 
@@ -179,6 +251,10 @@ static void console_newline(void) {
 }
 
 void console_putc(char c) {
+    if (console_suspended) {
+        return;
+    }
+
     console_erase_drawn_cursor();
 
     if (c == '\n') {
@@ -219,7 +295,13 @@ void console_write(const char* text) {
         return;
     }
 
+    /* Keep serial logs available even while a graphical program is active. */
     uart_puts(text);
+
+    if (console_suspended) {
+        return;
+    }
+
     while (*text) {
         console_putc(*text);
         text++;
@@ -227,6 +309,10 @@ void console_write(const char* text) {
 }
 
 void console_backspace(void) {
+    if (console_suspended) {
+        return;
+    }
+
     console_erase_drawn_cursor();
 
     if (cursor_x <= 0) {
@@ -263,6 +349,10 @@ int console_get_columns(void) {
 }
 
 void console_set_cursor_pos(int x, int y) {
+    if (console_suspended) {
+        return;
+    }
+
     console_erase_drawn_cursor();
 
     if (x < 0) {
@@ -293,6 +383,10 @@ void console_clear_line_from_cursor(void) {
     int px;
     int py;
     int width;
+
+    if (console_suspended) {
+        return;
+    }
 
     console_erase_drawn_cursor();
 
