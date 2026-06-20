@@ -11,8 +11,12 @@ hang:
     wfe
     b hang
 
-.section .bss
+
+.section .stack, "aw", %nobits
 .align 16
+
+.global stack_bottom
+.global stack_top
 
 stack_bottom:
     .skip 262144

@@ -16,10 +16,26 @@ SECTIONS {
         *(.data*)
     }
 
-    .bss : {
+    . = ALIGN(16);
+
+    .bss (NOLOAD) : {
         *(.bss*)
         *(COMMON)
     }
 
+    . = ALIGN(16);
+
+    .stack (NOLOAD) : {
+        KEEP(*(.stack))
+    }
+
+    . = ALIGN(16);
+
     kernel_end = .;
+
+    .heap (NOLOAD) : {
+        __heap_start = .;
+        . += 0x30000000;
+        __heap_end = .;
+    }
 }
