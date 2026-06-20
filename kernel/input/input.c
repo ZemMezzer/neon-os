@@ -22,7 +22,12 @@ static int input_is_empty(void) {
     return head == tail;
 }
 
-static void input_push_raw(InputEventType type, char ch, InputKey key) {
+static void input_push_raw(
+    InputEventType type,
+    char ch,
+    InputKey key,
+    uint8_t modifiers
+) {
     int current_tail;
     int next_tail;
 
@@ -36,16 +41,25 @@ static void input_push_raw(InputEventType type, char ch, InputKey key) {
     queue[current_tail].type = type;
     queue[current_tail].ch = ch;
     queue[current_tail].key = key;
+    queue[current_tail].modifiers = modifiers;
 
     tail = next_tail;
 }
 
+void input_push_char_with_modifiers(char ch, uint8_t modifiers) {
+    input_push_raw(INPUT_EVENT_CHAR, ch, INPUT_KEY_NONE, modifiers);
+}
+
+void input_push_key_with_modifiers(InputKey key, uint8_t modifiers) {
+    input_push_raw(INPUT_EVENT_KEY, 0, key, modifiers);
+}
+
 void input_push_char(char ch) {
-    input_push_raw(INPUT_EVENT_CHAR, ch, INPUT_KEY_NONE);
+    input_push_char_with_modifiers(ch, INPUT_MOD_NONE);
 }
 
 void input_push_key(InputKey key) {
-    input_push_raw(INPUT_EVENT_KEY, 0, key);
+    input_push_key_with_modifiers(key, INPUT_MOD_NONE);
 }
 
 int input_poll(InputEvent* event) {
@@ -64,6 +78,7 @@ int input_poll(InputEvent* event) {
     event->type = queue[current_head].type;
     event->ch = queue[current_head].ch;
     event->key = queue[current_head].key;
+    event->modifiers = queue[current_head].modifiers;
 
     head = input_next_index(current_head);
 

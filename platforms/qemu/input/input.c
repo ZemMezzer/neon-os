@@ -3,7 +3,88 @@
 #include "input.h"
 #include "virtio_mmio.h"
 
-#define KEY_CAPSLOCK 58
+#define KEY_ESC        1
+#define KEY_1          2
+#define KEY_2          3
+#define KEY_3          4
+#define KEY_4          5
+#define KEY_5          6
+#define KEY_6          7
+#define KEY_7          8
+#define KEY_8          9
+#define KEY_9          10
+#define KEY_0          11
+#define KEY_MINUS      12
+#define KEY_EQUAL      13
+#define KEY_BACKSPACE  14
+#define KEY_TAB        15
+
+#define KEY_Q          16
+#define KEY_W          17
+#define KEY_E          18
+#define KEY_R          19
+#define KEY_T          20
+#define KEY_Y          21
+#define KEY_U          22
+#define KEY_I          23
+#define KEY_O          24
+#define KEY_P          25
+
+#define KEY_LEFTBRACE  26
+#define KEY_RIGHTBRACE 27
+#define KEY_ENTER      28
+#define KEY_LEFTCTRL   29
+
+#define KEY_A          30
+#define KEY_S          31
+#define KEY_D          32
+#define KEY_F          33
+#define KEY_G          34
+#define KEY_H          35
+#define KEY_J          36
+#define KEY_K          37
+#define KEY_L          38
+
+#define KEY_SEMICOLON  39
+#define KEY_APOSTROPHE 40
+#define KEY_GRAVE      41
+
+#define KEY_LEFTSHIFT  42
+#define KEY_BACKSLASH  43
+
+#define KEY_Z          44
+#define KEY_X          45
+#define KEY_C          46
+#define KEY_V          47
+#define KEY_B          48
+#define KEY_N          49
+#define KEY_M          50
+
+#define KEY_COMMA      51
+#define KEY_DOT        52
+#define KEY_SLASH      53
+
+#define KEY_RIGHTSHIFT 54
+#define KEY_LEFTALT    56
+#define KEY_SPACE      57
+#define KEY_CAPSLOCK   58
+#define KEY_F2         60
+
+#define KEY_102ND      86
+#define KEY_RIGHTCTRL  97
+#define KEY_RIGHTALT   100
+
+#define KEY_HOME       102
+#define KEY_UP         103
+#define KEY_PAGEUP     104
+#define KEY_LEFT       105
+#define KEY_RIGHT      106
+#define KEY_END        107
+#define KEY_DOWN       108
+#define KEY_PAGEDOWN   109
+#define KEY_INSERT     110
+#define KEY_DELETE     111
+
 #define VIRTIO_INPUT_DEVICE_ID 18
 
 #define VIRTIO_MMIO_MAGIC_VALUE       0x000
@@ -38,82 +119,6 @@
 
 #define EV_SYN 0x00
 #define EV_KEY 0x01
-
-#define KEY_ESC        1
-#define KEY_1          2
-#define KEY_2          3
-#define KEY_3          4
-#define KEY_4          5
-#define KEY_5          6
-#define KEY_6          7
-#define KEY_7          8
-#define KEY_8          9
-#define KEY_9          10
-#define KEY_0          11
-#define KEY_MINUS      12
-#define KEY_EQUAL      13
-#define KEY_BACKSPACE  14
-#define KEY_TAB        15
-
-#define KEY_Q          16
-#define KEY_W          17
-#define KEY_E          18
-#define KEY_R          19
-#define KEY_T          20
-#define KEY_Y          21
-#define KEY_U          22
-#define KEY_I          23
-#define KEY_O          24
-#define KEY_P          25
-
-#define KEY_LEFTBRACE  26
-#define KEY_RIGHTBRACE 27
-#define KEY_ENTER      28
-
-#define KEY_A          30
-#define KEY_S          31
-#define KEY_D          32
-#define KEY_F          33
-#define KEY_G          34
-#define KEY_H          35
-#define KEY_J          36
-#define KEY_K          37
-#define KEY_L          38
-
-#define KEY_SEMICOLON  39
-#define KEY_APOSTROPHE 40
-#define KEY_GRAVE      41
-
-#define KEY_LEFTSHIFT  42
-#define KEY_BACKSLASH  43
-
-#define KEY_Z          44
-#define KEY_X          45
-#define KEY_C          46
-#define KEY_V          47
-#define KEY_B          48
-#define KEY_N          49
-#define KEY_M          50
-
-#define KEY_COMMA      51
-#define KEY_DOT        52
-#define KEY_SLASH      53
-
-#define KEY_RIGHTSHIFT 54
-#define KEY_SPACE      57
-
-#define KEY_102ND      86
-
-#define KEY_HOME       102
-#define KEY_UP         103
-#define KEY_PAGEUP     104
-#define KEY_LEFT       105
-#define KEY_RIGHT      106
-#define KEY_END        107
-#define KEY_DOWN       108
-#define KEY_PAGEDOWN   109
-#define KEY_INSERT     110
-#define KEY_DELETE     111
 
 #define ALIGN_UP_VALUE(value, align) \
     (((value) + ((align) - 1)) & ~((align) - 1))
@@ -163,11 +168,39 @@ static volatile VirtioInputEvent
     event_buffers[VIRTQ_SIZE] __attribute__((aligned(16)));
 
 static uint16_t last_used_idx = 0;
-static int shift_pressed = 0;
+
+static int left_shift_pressed = 0;
+static int right_shift_pressed = 0;
+static int left_ctrl_pressed = 0;
+static int right_ctrl_pressed = 0;
+static int left_alt_pressed = 0;
+static int right_alt_pressed = 0;
 static int caps_lock_enabled = 0;
 
+static int input_shift_pressed(void) {
+    return left_shift_pressed || right_shift_pressed;
+}
+
+static uint8_t input_current_modifiers(void) {
+    uint8_t modifiers = INPUT_MOD_NONE;
+
+    if (input_shift_pressed()) {
+        modifiers |= INPUT_MOD_SHIFT;
+    }
+
+    if (left_ctrl_pressed || right_ctrl_pressed) {
+        modifiers |= INPUT_MOD_CTRL;
+    }
+
+    if (left_alt_pressed || right_alt_pressed) {
+        modifiers |= INPUT_MOD_ALT;
+    }
+
+    return modifiers;
+}
+
 static int use_uppercase_for_letters(void) {
-    return shift_pressed ^ caps_lock_enabled;
+    return input_shift_pressed() ^ caps_lock_enabled;
 }
 
 static uint32_t mmio_read32(uintptr_t addr) {
@@ -237,6 +270,7 @@ static void virtqueue_notify(void) {
 
 static char keycode_to_char(uint16_t code) {
     int upper = use_uppercase_for_letters();
+    int shift = input_shift_pressed();
 
     switch (code) {
         case KEY_A: return upper ? 'A' : 'a';
@@ -266,34 +300,29 @@ static char keycode_to_char(uint16_t code) {
         case KEY_Y: return upper ? 'Y' : 'y';
         case KEY_Z: return upper ? 'Z' : 'z';
 
-        case KEY_1: return shift_pressed ? '!' : '1';
-        case KEY_2: return shift_pressed ? '@' : '2';
-        case KEY_3: return shift_pressed ? '#' : '3';
-        case KEY_4: return shift_pressed ? '$' : '4';
-        case KEY_5: return shift_pressed ? '%' : '5';
-        case KEY_6: return shift_pressed ? '^' : '6';
-        case KEY_7: return shift_pressed ? '&' : '7';
-        case KEY_8: return shift_pressed ? '*' : '8';
-        case KEY_9: return shift_pressed ? '(' : '9';
-        case KEY_0: return shift_pressed ? ')' : '0';
+        case KEY_1: return shift ? '!' : '1';
+        case KEY_2: return shift ? '@' : '2';
+        case KEY_3: return shift ? '#' : '3';
+        case KEY_4: return shift ? '$' : '4';
+        case KEY_5: return shift ? '%' : '5';
+        case KEY_6: return shift ? '^' : '6';
+        case KEY_7: return shift ? '&' : '7';
+        case KEY_8: return shift ? '*' : '8';
+        case KEY_9: return shift ? '(' : '9';
+        case KEY_0: return shift ? ')' : '0';
 
-        case KEY_MINUS: return shift_pressed ? '_' : '-';
-        case KEY_EQUAL: return shift_pressed ? '+' : '=';
-
-        case KEY_LEFTBRACE: return shift_pressed ? '{' : '[';
-        case KEY_RIGHTBRACE: return shift_pressed ? '}' : ']';
-
-        case KEY_SEMICOLON: return shift_pressed ? ':' : ';';
-        case KEY_APOSTROPHE: return shift_pressed ? '"' : '\'';
-        case KEY_GRAVE: return shift_pressed ? '~' : '`';
-
-        case KEY_BACKSLASH: return shift_pressed ? '|' : '\\';
-
-        case KEY_COMMA: return shift_pressed ? '<' : ',';
-        case KEY_DOT: return shift_pressed ? '>' : '.';
-        case KEY_SLASH: return shift_pressed ? '?' : '/';
-
-        case KEY_102ND: return shift_pressed ? '>' : '<';
+        case KEY_MINUS: return shift ? '_' : '-';
+        case KEY_EQUAL: return shift ? '+' : '=';
+        case KEY_LEFTBRACE: return shift ? '{' : '[';
+        case KEY_RIGHTBRACE: return shift ? '}' : ']';
+        case KEY_SEMICOLON: return shift ? ':' : ';';
+        case KEY_APOSTROPHE: return shift ? '"' : '\'';
+        case KEY_GRAVE: return shift ? '~' : '`';
+        case KEY_BACKSLASH: return shift ? '|' : '\\';
+        case KEY_COMMA: return shift ? '<' : ',';
+        case KEY_DOT: return shift ? '>' : '.';
+        case KEY_SLASH: return shift ? '?' : '/';
+        case KEY_102ND: return shift ? '>' : '<';
 
         case KEY_SPACE: return ' ';
         case KEY_ENTER: return '\n';
@@ -305,48 +334,101 @@ static char keycode_to_char(uint16_t code) {
     }
 }
 
-static int handle_special_key(uint16_t code) {
+static int handle_special_key(uint16_t code, uint8_t modifiers) {
+    if (code == KEY_ESC) {
+        input_push_key_with_modifiers(INPUT_KEY_ESCAPE, modifiers);
+        return 1;
+    }
+
     if (code == KEY_LEFT) {
-        input_push_key(INPUT_KEY_LEFT);
+        input_push_key_with_modifiers(INPUT_KEY_LEFT, modifiers);
         return 1;
     }
 
     if (code == KEY_RIGHT) {
-        input_push_key(INPUT_KEY_RIGHT);
+        input_push_key_with_modifiers(INPUT_KEY_RIGHT, modifiers);
         return 1;
     }
 
     if (code == KEY_UP) {
-        input_push_key(INPUT_KEY_UP);
+        input_push_key_with_modifiers(INPUT_KEY_UP, modifiers);
         return 1;
     }
 
     if (code == KEY_DOWN) {
-        input_push_key(INPUT_KEY_DOWN);
+        input_push_key_with_modifiers(INPUT_KEY_DOWN, modifiers);
         return 1;
     }
 
     if (code == KEY_HOME) {
-        input_push_key(INPUT_KEY_HOME);
+        input_push_key_with_modifiers(INPUT_KEY_HOME, modifiers);
         return 1;
     }
 
     if (code == KEY_END) {
-        input_push_key(INPUT_KEY_END);
+        input_push_key_with_modifiers(INPUT_KEY_END, modifiers);
         return 1;
     }
 
     if (code == KEY_DELETE) {
-        input_push_key(INPUT_KEY_DELETE);
+        input_push_key_with_modifiers(INPUT_KEY_DELETE, modifiers);
+        return 1;
+    }
+
+    if (code == KEY_PAGEUP) {
+        input_push_key_with_modifiers(INPUT_KEY_PAGE_UP, modifiers);
+        return 1;
+    }
+
+    if (code == KEY_PAGEDOWN) {
+        input_push_key_with_modifiers(INPUT_KEY_PAGE_DOWN, modifiers);
+        return 1;
+    }
+
+    if (code == KEY_INSERT) {
+        input_push_key_with_modifiers(INPUT_KEY_INSERT, modifiers);
+        return 1;
+    }
+
+    if (code == KEY_F2) {
+        input_push_key_with_modifiers(INPUT_KEY_F2, modifiers);
         return 1;
     }
 
     return 0;
 }
 
+static void handle_modifier_key(uint16_t code, int32_t value) {
+    int pressed = value != 0;
+
+    if (code == KEY_LEFTSHIFT) {
+        left_shift_pressed = pressed;
+    } else if (code == KEY_RIGHTSHIFT) {
+        right_shift_pressed = pressed;
+    } else if (code == KEY_LEFTCTRL) {
+        left_ctrl_pressed = pressed;
+    } else if (code == KEY_RIGHTCTRL) {
+        right_ctrl_pressed = pressed;
+    } else if (code == KEY_LEFTALT) {
+        left_alt_pressed = pressed;
+    } else if (code == KEY_RIGHTALT) {
+        right_alt_pressed = pressed;
+    }
+}
+
+static int is_modifier_key(uint16_t code) {
+    return code == KEY_LEFTSHIFT ||
+           code == KEY_RIGHTSHIFT ||
+           code == KEY_LEFTCTRL ||
+           code == KEY_RIGHTCTRL ||
+           code == KEY_LEFTALT ||
+           code == KEY_RIGHTALT;
+}
+
 static void handle_input_event(volatile VirtioInputEvent* event) {
     uint16_t code;
     int32_t value;
+    uint8_t modifiers;
     char ch;
 
     if (event->type != EV_KEY) {
@@ -356,8 +438,8 @@ static void handle_input_event(volatile VirtioInputEvent* event) {
     code = event->code;
     value = event->value;
 
-    if (code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT) {
-        shift_pressed = value != 0;
+    if (is_modifier_key(code)) {
+        handle_modifier_key(code, value);
         return;
     }
 
@@ -375,14 +457,16 @@ static void handle_input_event(volatile VirtioInputEvent* event) {
         return;
     }
 
-    if (handle_special_key(code)) {
+    modifiers = input_current_modifiers();
+
+    if (handle_special_key(code, modifiers)) {
         return;
     }
 
     ch = keycode_to_char(code);
 
     if (ch != 0) {
-        input_push_char(ch);
+        input_push_char_with_modifiers(ch, modifiers);
     }
 }
 

@@ -3,17 +3,22 @@
 #include "lua.h"
 
 /*
-    Lua module name: input
+    Frame-safe Lua input API:
 
-    Minimal, frame-safe API:
+        local key, mods = input.poll()
 
-        local key = input.poll()  -- integer key code or nil
+        if key and mods.ctrl and key == input.S then
+            -- Ctrl+S
+        end
+
+    `key` preserves text case. For example Shift+A returns byte 'A'.
+    Existing games can keep using:
+
+        local key = input.poll()
         if key == input.Q then ... end
-        if input.pressed(input.LEFT) then ... end
 
-    input.poll()/pressed() touches the keyboard driver at most once between
-    gfx.present() calls.  The module keeps only one event for the current
-    frame; it intentionally does not maintain a second FIFO.
+    The keyboard driver is touched at most once between gfx.present() calls.
+    Only one pending event is cached for the current visual frame.
 */
 int luaopen_input(lua_State* state);
 
