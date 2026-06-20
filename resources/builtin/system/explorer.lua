@@ -28,6 +28,9 @@
 --   Backspace/Left      parent folder
 --   Tab                 cancel
 --
+-- In picker modes:
+--   N                   create a new folder and open it
+--
 -- In text prompts:
 --   Enter               confirm
 --   Tab                 cancel
@@ -36,6 +39,8 @@
 local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
+
+local args = { ... }
 
 local COLOR = {
     black = 0x000000,
@@ -79,6 +84,16 @@ local dirty = true
 -- nil while browsing normally.
 -- { kind = "copy" | "move", source = item } while choosing a destination.
 local target_mode = nil
+
+-- When launched by Notes:
+--   explorer --pick-file <result_file> [start_folder]
+--   explorer --pick-folder <result_file> [start_folder]
+--   explorer --pick-path <result_file> [start_folder]
+--
+-- The selected path is written to result_file and Explorer exits. This tiny
+-- hand-off file is deleted by Notes after reading it.
+local picker_mode = nil
+local picker_result_path = nil
 
 -- nil, or a modal table for confirmation/text entry.
 local modal = nil
@@ -126,6 +141,143 @@ local function path_equals(left, right)
     end
 
     return a == b
+end
+
+local function normalize_launch_path(path)
+    path = tostring(path or ""):gsub("\\", "/")
+
+    if path == "" or path == "/" or path == "0:" or path == "0:/" then
+        return "0:/"
+    end
+
+    if path:sub(1, 2) == "./" then
+        path = path:sub(3)
+    end
+
+    if path:sub(1, 2) == "0:" then
+        if path:sub(3, 3) ~= "/" then
+            path = "0:/" .. path:sub(3)
+        end
+    elseif path:sub(1, 1) == "/" then
+        path = "0:" .. path
+    else
+        path = "0:/" .. path
+    end
+
+    while #path > 3 and path:sub(-1) == "/" do
+        path = path:sub(1, -2)
+    end
+
+    return path
+end
+
+local function lower_shortcut(key)
+    if key >= string.byte("A") and key <= string.byte("Z") then
+        return key - string.byte("A") + string.byte("a")
+    end
+
+    return key
+end
+
+local function ensure_picker_parent()
+    local parent = fs.getDir(picker_result_path)
+
+    if parent == nil or parent == "" or parent == "0:" or parent == "0:/" then
+        return true
+    end
+
+    if fs.exists(parent) then
+        return fs.isDir(parent)
+    end
+
+    -- Only the system variables folder is normally used here. We create
+    -- missing components one at a time so FatFs does not need recursive mkdir.
+    local current = "0:"
+    local remainder = normalize_launch_path(parent):sub(4)
+
+    for part in remainder:gmatch("[^/]+") do
+        current = current .. "/" .. part
+
+        if fs.exists(current) then
+            if not fs.isDir(current) then
+                return false
+            end
+        else
+            local ok = pcall(fs.makeDir, current)
+            if not ok then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+local function finish_picker(path)
+    local handle
+
+    if not picker_mode then
+        return false
+    end
+
+    if not ensure_picker_parent() then
+        status = "Cannot create picker folder"
+        dirty = true
+        return false
+    end
+
+    handle = io.open(picker_result_path, "w")
+
+    if not handle then
+        status = "Cannot write picker result"
+        dirty = true
+        return false
+    end
+
+    handle:write(normalize_launch_path(path))
+    handle:write("\n")
+    handle:close()
+
+    running = false
+    return true
+end
+
+local function parse_picker_args()
+    local flag = args[1]
+    local start
+
+    if flag ~= "--pick-file" and
+       flag ~= "--pick-folder" and
+       flag ~= "--pick-path" and
+       flag ~= "--pick" then
+        return
+    end
+
+    if args[2] == nil or args[2] == "" then
+        status = "Picker needs a result file"
+        return
+    end
+
+    if flag == "--pick-folder" then
+        picker_mode = "folder"
+    elseif flag == "--pick-path" then
+        -- Combined mode: choose a file, or choose the current folder.
+        picker_mode = "path"
+    else
+        picker_mode = "file"
+    end
+
+    picker_result_path = normalize_launch_path(args[2])
+    start = normalize_launch_path(args[3] or "0:/")
+
+    if fs.exists(start) and fs.isDir(start) then
+        cwd = start
+    else
+        cwd = "0:/"
+    end
+
+    selected = 1
+    offset = 1
 end
 
 local function fit(text, max_chars)
@@ -309,16 +461,40 @@ local function is_lua_file(item)
     return #name >= 4 and name:sub(-4) == ".lua"
 end
 
+local function is_text_file(item)
+    local name
+    local extension
+
+    if not item or item.parent or item.isDir then
+        return false
+    end
+
+    name = string.lower(tostring(item.name or ""))
+    extension = name:match("(%.[^./]+)$") or ""
+
+    return extension == ".txt" or
+           extension == ".md" or
+           extension == ".log" or
+           extension == ".cfg" or
+           extension == ".ini" or
+           extension == ".json" or
+           extension == ".csv" or
+           extension == ".c" or
+           extension == ".h" or
+           extension == ".lua"
+end
+
+local function shell_quote(value)
+    return '"' .. tostring(value or ""):gsub('"', "") .. '"'
+end
+
 local function run_lua_file(item)
     if not is_lua_file(item) then
         set_status("Not a Lua file: " .. tostring(item and item.name or ""))
         return
     end
 
-    -- os.execute() calls NeonOS' synchronous shell command runner. This
-    -- starts a nested Lua program, so os.exit() in the launched script
-    -- exits only that child program and returns here afterward.
-    local command = "lua " .. item.path
+    local command = "lua " .. shell_quote(item.path)
     local ok
     local result
     local reason
@@ -326,7 +502,6 @@ local function run_lua_file(item)
 
     set_status("Launching " .. item.name)
 
-    -- Do not leave Explorer's old frame behind while the child initializes.
     gfx.clear(COLOR.black)
     gfx.present()
 
@@ -337,19 +512,41 @@ local function run_lua_file(item)
         return
     end
 
-    -- Lua versions differ slightly in os.execute() return values:
-    -- true, "exit", 0  |  0  |  nil, "exit", nonzero.
     if result == true or result == 0 or code == 0 then
         refresh("Returned from " .. item.name)
     else
-        local status = code
+        local exit_status = code
 
-        if status == nil then
-            status = result
+        if exit_status == nil then
+            exit_status = result
         end
 
-        refresh("Lua exited with " .. tostring(status))
+        refresh("Lua exited with " .. tostring(exit_status))
     end
+end
+
+local function open_in_notes(item)
+    if not is_text_file(item) then
+        set_status("Not a text file: " .. tostring(item and item.name or ""))
+        return
+    end
+
+    set_status("Opening " .. item.name)
+
+    gfx.clear(COLOR.black)
+    gfx.present()
+
+    local ok, result = pcall(
+        os.execute,
+        "notes " .. shell_quote(item.path)
+    )
+
+    if not ok then
+        refresh("Notes launch failed: " .. tostring(result))
+        return
+    end
+
+    refresh("Returned from Notes")
 end
 
 local function open_selected_item()
@@ -360,10 +557,27 @@ local function open_selected_item()
         return
     end
 
+    if picker_mode == "folder" then
+        -- Folder selection is two-step: Enter opens a highlighted folder.
+        -- Space, E or F2 confirms the folder currently open.
+        if item.parent then
+            go_parent()
+        elseif item.isDir then
+            open_directory(item)
+        else
+            set_status("Select a folder, or Space/E/F2 for current folder")
+        end
+        return
+    end
+
     if item.isDir then
         open_directory(item)
+    elseif picker_mode == "file" or picker_mode == "path" then
+        finish_picker(item.path)
     elseif is_lua_file(item) then
         run_lua_file(item)
+    elseif is_text_file(item) then
+        open_in_notes(item)
     else
         set_status("Unsupported file: " .. item.name)
     end
@@ -458,7 +672,13 @@ local function draw_ui()
     draw_line(0, HEADER_HEIGHT - 1, SCREEN_WIDTH, COLOR.border)
 
     local title = "NeonOS Explorer"
-    if target_mode then
+    if picker_mode == "file" then
+        title = "NeonOS Explorer - Select file"
+    elseif picker_mode == "folder" then
+        title = "NeonOS Explorer - Select folder"
+    elseif picker_mode == "path" then
+        title = "NeonOS Explorer - Select file or folder"
+    elseif target_mode then
         title = "NeonOS Explorer - Select " .. target_mode.kind .. " target"
     end
 
@@ -494,14 +714,26 @@ local function draw_ui()
 
     local footer_chars = math.floor((SCREEN_WIDTH - PADDING * 2) / CHAR_WIDTH)
 
-    if target_mode then
+    if picker_mode == "file" then
+        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter: open folder / choose file   Right: open folder", COLOR.text, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Selected file returns to Notes", COLOR.warning, footer_chars)
+    elseif picker_mode == "folder" then
+        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/Right: open folder   Space/E/F2: choose current folder", COLOR.text, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Choose current folder to return to Notes", COLOR.warning, footer_chars)
+    elseif picker_mode == "path" then
+        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter: open folder / choose file   Right: open folder", COLOR.text, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "Space/E/F2: choose current folder   N: new folder", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Backspace/Left: parent   Tab or Q: cancel", COLOR.warning, footer_chars)
+    elseif target_mode then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Right/O: open folder   Enter: choose this folder", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "Backspace/Left: parent   Tab: cancel", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "Source: " .. target_mode.source.name, COLOR.warning, footer_chars)
     else
-        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter open/run Lua  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 42, "D delete  N mkdir  R rename  C copy  M move  F refresh", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "I info  [/] page  Home/End bounds  Q quit", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter open/run/edit  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "E edit text  D delete  N mkdir  R rename  C copy  M move", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "F refresh  I info  [/] page  Home/End bounds  Q quit", COLOR.muted, footer_chars)
     end
 
     draw_modal()
@@ -641,7 +873,7 @@ local function delete_selected()
     end)
 end
 
-local function make_directory()
+local function make_directory(open_after_create)
     begin_text(
         "Create directory",
         "Name (ASCII recommended; no slash):",
@@ -668,10 +900,20 @@ local function make_directory()
 
             local ok, err = pcall(fs.makeDir, path)
 
-            if ok then
-                refresh("Created " .. name)
-            else
+            if not ok then
                 refresh("Create failed: " .. tostring(err))
+                return
+            end
+
+            -- During folder picking, go straight into the newly created
+            -- directory so it can immediately become the save destination.
+            if open_after_create then
+                cwd = normalize_root(path)
+                selected = 1
+                offset = 1
+                refresh("Created and opened " .. name)
+            else
+                refresh("Created " .. name)
             end
         end
     )
@@ -766,8 +1008,10 @@ local function show_info()
 end
 
 local function handle_modal_key(key)
+    local shortcut = lower_shortcut(key)
+
     if modal.type == "confirm" then
-        if key == input.Y or key == input.ENTER then
+        if shortcut == input.Y or key == input.ENTER then
             local callback = modal.on_yes
             if callback then
                 callback()
@@ -778,7 +1022,7 @@ local function handle_modal_key(key)
             return
         end
 
-        if key == input.N or key == input.TAB then
+        if shortcut == input.N or key == input.TAB then
             local callback = modal.on_no
             if callback then
                 callback()
@@ -828,17 +1072,19 @@ local function handle_modal_key(key)
 end
 
 local function handle_target_key(key)
-    if key == input.TAB or key == input.Q then
+    local shortcut = lower_shortcut(key)
+
+    if key == input.TAB or shortcut == input.Q then
         cancel_target("Operation cancelled")
         return
     end
 
-    if key == input.UP or key == input.W then
+    if key == input.UP or shortcut == input.W then
         change_selection(-1)
         return
     end
 
-    if key == input.DOWN or key == input.S then
+    if key == input.DOWN or shortcut == input.S then
         change_selection(1)
         return
     end
@@ -872,7 +1118,7 @@ local function handle_target_key(key)
         return
     end
 
-    if key == input.RIGHT or key == input.O then
+    if key == input.RIGHT or shortcut == input.O then
         local item = selected_item()
         if item and item.isDir then
             open_directory(item)
@@ -888,17 +1134,32 @@ local function handle_target_key(key)
 end
 
 local function handle_browse_key(key)
-    if key == input.Q then
+    local shortcut = lower_shortcut(key)
+
+    if picker_mode and (key == input.TAB or shortcut == input.Q) then
         running = false
         return
     end
 
-    if key == input.UP or key == input.W then
+    if not picker_mode and shortcut == input.Q then
+        running = false
+        return
+    end
+
+    -- Choose the folder currently open. E/F2 are convenient fallbacks
+    -- if Space is not delivered by the current keyboard layout.
+    if (picker_mode == "folder" or picker_mode == "path") and
+       (key == input.SPACE or shortcut == input.E or key == input.F2) then
+        finish_picker(cwd)
+        return
+    end
+
+    if key == input.UP or shortcut == input.W then
         change_selection(-1)
         return
     end
 
-    if key == input.DOWN or key == input.S then
+    if key == input.DOWN or shortcut == input.S then
         change_selection(1)
         return
     end
@@ -942,37 +1203,51 @@ local function handle_browse_key(key)
         return
     end
 
-    if key == input.D or key == input.DELETE then
+    if picker_mode then
+        if shortcut == input.N then
+            -- Available in both file and folder pickers. In a folder picker
+            -- this is the flow used by Notes Save As.
+            make_directory(true)
+        end
+        return
+    end
+
+    if shortcut == input.E then
+        open_in_notes(selected_item())
+        return
+    end
+
+    if shortcut == input.D or key == input.DELETE then
         delete_selected()
         return
     end
 
-    if key == input.N then
+    if shortcut == input.N then
         make_directory()
         return
     end
 
-    if key == input.R then
+    if shortcut == input.R then
         rename_selected()
         return
     end
 
-    if key == input.C then
+    if shortcut == input.C then
         start_copy_or_move("copy")
         return
     end
 
-    if key == input.M then
+    if shortcut == input.M then
         start_copy_or_move("move")
         return
     end
 
-    if key == input.F then
+    if shortcut == input.F then
         refresh("Refreshed")
         return
     end
 
-    if key == input.I then
+    if shortcut == input.I then
         show_info()
     end
 end
@@ -986,6 +1261,8 @@ local function handle_key(key)
         handle_browse_key(key)
     end
 end
+
+parse_picker_args()
 
 refresh("Ready")
 
