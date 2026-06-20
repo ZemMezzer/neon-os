@@ -8,6 +8,10 @@
 #include "lua_shell.h"
 #endif
 
+#if BUILTIN_RESOURCES_ENABLED
+#include "builtin_apps_install.h"
+#endif
+
 static void halt(void) {
     while (1) {
         asm volatile("wfe");
@@ -22,6 +26,12 @@ void kernel_main(void) {
         console_write("stdio_init failed\n");
         halt();
     }
+
+#if BUILTIN_RESOURCES_ENABLED
+    if (builtin_apps_install_if_needed() != 0) {
+        console_write("builtin app install failed\n");
+    }
+#endif
 
     shell_init();
 

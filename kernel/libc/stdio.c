@@ -185,13 +185,56 @@ static void stdio_reset_file_fields(FILE* stream, int index) {
 }
 
 
+static BYTE stdio_mkfs_work[FF_MAX_SS];
+
+static int stdio_format_and_mount(void) {
+    MKFS_PARM options;
+    FRESULT result;
+
+    options.fmt = FM_FAT32 | FM_SFD;
+    options.n_fat = 0;
+    options.align = 0;
+    options.n_root = 0;
+    options.au_size = 0;
+
+    (void)f_mount(NULL, "0:", 0);
+
+    result = f_mkfs(
+        "0:",
+        &options,
+        stdio_mkfs_work,
+        sizeof(stdio_mkfs_work)
+    );
+
+    if (result != FR_OK) {
+        stdio_set_errno_from_fresult(result);
+        return -1;
+    }
+
+    result = f_mount(&stdio_fs, "0:", 1);
+
+    if (result != FR_OK) {
+        stdio_set_errno_from_fresult(result);
+        return -1;
+    }
+
+    stdio_mounted = 1;
+    return 0;
+}
+
 static int stdio_ensure_mounted(void) {
     FRESULT result;
 
     if (stdio_mounted) {
         return 0;
     }
+
     result = f_mount(&stdio_fs, "0:", 1);
+
+    if (result == FR_NO_FILESYSTEM) {
+        console_write("No filesystem, formatting disk...\n");
+        return stdio_format_and_mount();
+    }
 
     if (result != FR_OK) {
         stdio_set_errno_from_fresult(result);

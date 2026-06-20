@@ -1,5 +1,6 @@
 target_sources(objects PRIVATE
     program_runtime.c
+    builtin_apps_install.c
 )
 
 target_include_directories(objects PUBLIC
