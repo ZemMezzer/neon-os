@@ -242,6 +242,7 @@ void shell_init(void) {
     shell_prompt();
 
     console_cursor_enable(1);
+    shell_commands_init();
 }
 
 void shell_update(void) {

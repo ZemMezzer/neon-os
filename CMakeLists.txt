@@ -5,12 +5,27 @@ project(NeonOS C ASM)
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
 set(PLATFORM "" CACHE STRING "Target platform")
 
+option(LUA_ENABLED "Lua" ON)
+
 add_library(objects OBJECT)
+add_library(third_party OBJECT)
 
 target_compile_options(objects PRIVATE
     -Wall
     -Wextra
     -O2
+    -ffreestanding
+    -fno-builtin
+    -fno-tree-loop-distribute-patterns
+    -nostdlib
+    -nostartfiles
+)
+
+target_compile_options(third_party PRIVATE
+    -Wall
+    -Wextra
+    -O0
+    -fno-strict-aliasing
     -ffreestanding
     -fno-builtin
     -fno-tree-loop-distribute-patterns
@@ -26,8 +41,16 @@ else()
     message(FATAL_ERROR "Unknown PLATFORM: ${PLATFORM}")
 endif()
 
+if(LUA_ENABLED)
+    target_compile_definitions(objects PRIVATE
+        LUA_ENABLED=1
+    )
+    add_subdirectory(lua)
+endif()
+
 add_executable(${PROJECT_NAME}
     boot.S
+    $<TARGET_OBJECTS:third_party>
     $<TARGET_OBJECTS:objects>
 )
 

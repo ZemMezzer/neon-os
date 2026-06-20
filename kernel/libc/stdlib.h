@@ -22,3 +22,7 @@ void abort(void) __attribute__((noreturn));
 size_t heap_total_bytes(void);
 size_t heap_used_bytes(void);
 size_t heap_free_bytes(void);
+
+int abs(int value);
+long labs(long value);
+long long llabs(long long value);

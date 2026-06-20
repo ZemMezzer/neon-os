@@ -526,3 +526,48 @@ void abort(void) {
         asm volatile("wfe");
     }
 }
+
+int abs(int value)
+    __attribute__((noinline, used, optimize("O0")));
+
+int abs(int value) {
+    if (value >= 0) {
+        return value;
+    }
+
+    if (value == (-2147483647 - 1)) {
+        return 2147483647;
+    }
+
+    return -value;
+}
+
+long labs(long value)
+    __attribute__((noinline, used, optimize("O0")));
+
+long labs(long value) {
+    if (value >= 0) {
+        return value;
+    }
+
+    if (value == (-9223372036854775807L - 1L)) {
+        return 9223372036854775807L;
+    }
+
+    return -value;
+}
+
+long long llabs(long long value)
+    __attribute__((noinline, used, optimize("O0")));
+
+long long llabs(long long value) {
+    if (value >= 0) {
+        return value;
+    }
+
+    if (value == (-9223372036854775807LL - 1LL)) {
+        return 9223372036854775807LL;
+    }
+
+    return -value;
+}

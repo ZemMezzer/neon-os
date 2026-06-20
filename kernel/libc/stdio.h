@@ -78,5 +78,4 @@ int neon_snprintf(
 
 #define snprintf neon_snprintf
 
-#define vsnprintf(buffer, size, format, args) \
-    neon_vsnprintf_ptr((buffer), (size), (format), &(args))
+#define vsnprintf(buffer, size, format, args) neon_vsnprintf_ptr((buffer), (size), (format), &(args))

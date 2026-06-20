@@ -1,6 +1,7 @@
 #include "console.h"
 #include "gfx.h"
 #include "framebuffer.h"
+#include "uart.h"
 
 #define CONSOLE_BG 0x00000000
 #define CONSOLE_FG 0x00FFFFFF
@@ -218,6 +219,7 @@ void console_write(const char* text) {
         return;
     }
 
+    uart_puts(text);
     while (*text) {
         console_putc(*text);
         text++;

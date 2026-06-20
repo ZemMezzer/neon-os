@@ -8,8 +8,14 @@ target_sources(objects PRIVATE
     errno.c
     strtol.c
     strtod.c
+    locale.c
+    math.c
 
     setjmp.S
+)
+
+target_include_directories(third_party PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_include_directories(objects PUBLIC

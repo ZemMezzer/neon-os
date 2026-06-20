@@ -86,7 +86,7 @@ static void shell_print_error(const char* text) {
     console_write("\n");
 }
 
-static int shell_make_path(const char* input, char* out, int out_size) {
+int shell_resolve_path(const char* input, char* out, int out_size) {
     int pos = 0;
     int i = 0;
     int cwd_len;
@@ -287,21 +287,32 @@ static int cmd_rm(int argc, char** argv);
 static int cmd_mv(int argc, char** argv);
 static int cmd_echo(int argc, char** argv);
 
-static const ShellCommand commands[] = {
-    { "help",   "show commands",              cmd_help },
-    { "pwd",    "show current directory",     cmd_pwd },
-    { "cd",     "change directory",           cmd_cd },
-    { "ls",     "list directory",             cmd_ls },
-    { "mkdir",  "create directory",           cmd_mkdir },
-    { "cat",    "print file",                 cmd_cat },
-    { "write",  "write text to file",         cmd_write },
-    { "append", "append text to file",        cmd_append },
-    { "rm",     "remove file or empty dir",   cmd_rm },
-    { "mv",     "rename or move",             cmd_mv },
-    { "echo",   "print text",                 cmd_echo },
-};
+#define SHELL_MAX_COMMANDS 32
 
-static const int command_count = sizeof(commands) / sizeof(commands[0]);
+static ShellCommand commands[SHELL_MAX_COMMANDS];
+static int command_count = 0;
+
+int shell_register_command(
+    const char* name,
+    const char* help,
+    ShellCommandFn fn
+) {
+    if (name == NULL || help == NULL || fn == NULL) {
+        return -1;
+    }
+
+    if (command_count >= SHELL_MAX_COMMANDS) {
+        return -1;
+    }
+
+    commands[command_count].name = name;
+    commands[command_count].help = help;
+    commands[command_count].fn = fn;
+
+    command_count++;
+
+    return 0;
+}
 
 static int cmd_help(int argc, char** argv) {
     (void)argc;
@@ -356,7 +367,7 @@ static int cmd_cd(int argc, char** argv) {
         return 0;
     }
 
-    if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
         shell_print_error("path too long");
         return -1;
     }
@@ -382,7 +393,7 @@ static int cmd_ls(int argc, char** argv) {
     FRESULT res;
 
     if (argc >= 2) {
-        if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+        if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
             shell_print_error("path too long");
             return -1;
         }
@@ -433,7 +444,7 @@ static int cmd_mkdir(int argc, char** argv) {
         return -1;
     }
 
-    if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
         shell_print_error("path too long");
         return -1;
     }
@@ -457,7 +468,7 @@ static int cmd_cat(int argc, char** argv) {
         return -1;
     }
 
-    if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
         shell_print_error("path too long");
         return -1;
     }
@@ -495,7 +506,7 @@ static int cmd_write(int argc, char** argv) {
         return -1;
     }
 
-    if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
         shell_print_error("path too long");
         return -1;
     }
@@ -524,7 +535,7 @@ static int cmd_append(int argc, char** argv) {
         return -1;
     }
 
-    if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
         shell_print_error("path too long");
         return -1;
     }
@@ -552,7 +563,7 @@ static int cmd_rm(int argc, char** argv) {
         return -1;
     }
 
-    if (shell_make_path(argv[1], path, sizeof(path)) != 0) {
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
         shell_print_error("path too long");
         return -1;
     }
@@ -574,12 +585,12 @@ static int cmd_mv(int argc, char** argv) {
         return -1;
     }
 
-    if (shell_make_path(argv[1], old_path, sizeof(old_path)) != 0) {
+    if (shell_resolve_path(argv[1], old_path, sizeof(old_path)) != 0) {
         shell_print_error("old path too long");
         return -1;
     }
 
-    if (shell_make_path(argv[2], new_path, sizeof(new_path)) != 0) {
+    if (shell_resolve_path(argv[2], new_path, sizeof(new_path)) != 0) {
         shell_print_error("new path too long");
         return -1;
     }
@@ -631,4 +642,18 @@ void shell_commands_execute(const char* line) {
     console_write("Unknown command: ");
     console_write(argv[0]);
     console_write("\n");
+}
+
+void shell_commands_init(void) {
+    shell_register_command("help", "show commands", cmd_help);
+    shell_register_command("pwd", "show current directory", cmd_pwd);
+    shell_register_command("cd", "change directory", cmd_cd);
+    shell_register_command("ls", "list directory", cmd_ls);
+    shell_register_command("mkdir", "create directory", cmd_mkdir);
+    shell_register_command("cat", "print file", cmd_cat);
+    shell_register_command("write", "write text to file", cmd_write);
+    shell_register_command("append", "append text to file", cmd_append);
+    shell_register_command("rm", "remove file or empty dir", cmd_rm);
+    shell_register_command("mv", "rename or move", cmd_mv);
+    shell_register_command("echo", "print text", cmd_echo);
 }
