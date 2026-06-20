@@ -68,13 +68,3 @@ add_custom_command(
 add_custom_target(kernel_img ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/kernel8.img
 )
-
-add_custom_target(run
-    COMMAND qemu-system-aarch64
-            -M virt
-            -cpu cortex-a53
-            -nographic
-            -kernel ${CMAKE_CURRENT_BINARY_DIR}/kernel8.img
-    DEPENDS kernel_img
-    USES_TERMINAL
-)

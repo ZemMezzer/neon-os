@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "stdarg.h"
+
 #define EOF (-1)
 
 #define SEEK_SET 0
@@ -57,4 +59,24 @@ int remove(const char* path);
 int rename(const char* old_path, const char* new_path);
 
 int setvbuf(FILE* stream, char* buffer, int mode, size_t size);
+
 void perror(const char* s);
+
+int neon_vsnprintf_ptr(
+    char* buffer,
+    size_t size,
+    const char* format,
+    va_list* args
+);
+
+int neon_snprintf(
+    char* buffer,
+    size_t size,
+    const char* format,
+    ...
+);
+
+#define snprintf neon_snprintf
+
+#define vsnprintf(buffer, size, format, args) \
+    neon_vsnprintf_ptr((buffer), (size), (format), &(args))

@@ -1,9 +1,7 @@
 #include "gfx.h"
 #include "console.h"
-#include "input.h"
 #include "stdio.h"
 #include "shell.h"
-#include "stdlib.h"
 
 static void halt(void) {
     while (1) {

@@ -3,6 +3,13 @@ target_sources(objects PRIVATE
     memory.c
     stdio.c
     stdlib.c
+    ctype.c
+    format.c
+    errno.c
+    strtol.c
+    strtod.c
+
+    setjmp.S
 )
 
 target_include_directories(objects PUBLIC

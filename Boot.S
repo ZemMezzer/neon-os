@@ -5,6 +5,11 @@ _start:
     ldr x0, =stack_top
     mov sp, x0
 
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
     bl kernel_main
 
 hang:
@@ -12,11 +17,8 @@ hang:
     b hang
 
 
-.section .stack, "aw", %nobits
+.section .bss
 .align 16
-
-.global stack_bottom
-.global stack_top
 
 stack_bottom:
     .skip 262144
