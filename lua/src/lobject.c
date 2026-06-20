@@ -593,7 +593,7 @@ static void addnum2buff (BuffFS *buff, TValue *num) {
 ** this function handles only '%d', '%c', '%f', '%p', '%s', and '%%'
    conventional formats, plus Lua-specific '%I' and '%U'
 */
-const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list argp) {
+const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list *argp) {
   BuffFS buff;  /* holds last part of the result */
   const char *e;  /* points to next '%' */
   initbuff(L, &buff);
@@ -601,44 +601,44 @@ const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list argp) {
     addstr2buff(&buff, fmt, ct_diff2sz(e - fmt));  /* add 'fmt' up to '%' */
     switch (*(e + 1)) {  /* conversion specifier */
       case 's': {  /* zero-terminated string */
-        const char *s = va_arg(argp, char *);
+        const char *s = va_arg(*argp, char *);
         if (s == NULL) s = "(null)";
         addstr2buff(&buff, s, strlen(s));
         break;
       }
       case 'c': {  /* an 'int' as a character */
-        char c = cast_char(va_arg(argp, int));
+        char c = cast_char(va_arg(*argp, int));
         addstr2buff(&buff, &c, sizeof(char));
         break;
       }
       case 'd': {  /* an 'int' */
         TValue num;
-        setivalue(&num, va_arg(argp, int));
+        setivalue(&num, va_arg(*argp, int));
         addnum2buff(&buff, &num);
         break;
       }
       case 'I': {  /* a 'lua_Integer' */
         TValue num;
-        setivalue(&num, cast_Integer(va_arg(argp, l_uacInt)));
+        setivalue(&num, cast_Integer(va_arg(*argp, l_uacInt)));
         addnum2buff(&buff, &num);
         break;
       }
       case 'f': {  /* a 'lua_Number' */
         TValue num;
-        setfltvalue(&num, cast_num(va_arg(argp, l_uacNumber)));
+        setfltvalue(&num, cast_num(va_arg(*argp, l_uacNumber)));
         addnum2buff(&buff, &num);
         break;
       }
       case 'p': {  /* a pointer */
         char bf[LUA_N2SBUFFSZ];  /* enough space for '%p' */
-        void *p = va_arg(argp, void *);
+        void *p = va_arg(*argp, void *);
         int len = lua_pointer2str(bf, LUA_N2SBUFFSZ, p);
         addstr2buff(&buff, bf, cast_uint(len));
         break;
       }
       case 'U': {  /* an 'unsigned long' as a UTF-8 sequence */
         char bf[UTF8BUFFSZ];
-        unsigned long arg = va_arg(argp, unsigned long);
+        unsigned long arg = va_arg(*argp, unsigned long);
         int len = luaO_utf8esc(bf, cast(l_uint32, arg));
         addstr2buff(&buff, bf + UTF8BUFFSZ - len, cast_uint(len));
         break;
@@ -663,7 +663,7 @@ const char *luaO_pushfstring (lua_State *L, const char *fmt, ...) {
   const char *msg;
   va_list argp;
   va_start(argp, fmt);
-  msg = luaO_pushvfstring(L, fmt, argp);
+  msg = luaO_pushvfstring(L, fmt, &argp);
   va_end(argp);
   if (msg == NULL)  /* error? */
     luaD_throw(L, LUA_ERRMEM);

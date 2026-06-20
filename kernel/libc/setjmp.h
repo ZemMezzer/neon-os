@@ -11,8 +11,5 @@ typedef struct __attribute__((aligned(16))) NeonJmpContext {
 
 typedef NeonJmpContext jmp_buf[1];
 
-int setjmp(jmp_buf env)
-    __attribute__((returns_twice));
-
-void longjmp(jmp_buf env, int value)
-    __attribute__((noreturn));
+int setjmp(jmp_buf env) __attribute__((returns_twice));
+void longjmp(jmp_buf env, int value) __attribute__((noreturn));

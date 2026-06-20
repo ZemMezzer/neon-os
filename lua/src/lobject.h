@@ -834,11 +834,11 @@ typedef struct Table {
 
 
 /* macro to call 'luaO_pushvfstring' correctly */
-#define pushvfstring(L, argp, fmt, msg)	\
+#define pushvfstring(L, argp, fmt, msg) \
   { va_start(argp, fmt); \
-  msg = luaO_pushvfstring(L, fmt, argp); \
+  msg = luaO_pushvfstring(L, fmt, &(argp)); \
   va_end(argp); \
-  if (msg == NULL) luaD_throw(L, LUA_ERRMEM);  /* only after 'va_end' */ }
+  if (msg == NULL) luaD_throw(L, LUA_ERRMEM); }
 
 
 LUAI_FUNC int luaO_utf8esc (char *buff, l_uint32 x);
@@ -854,8 +854,8 @@ LUAI_FUNC size_t luaO_str2num (const char *s, TValue *o);
 LUAI_FUNC unsigned luaO_tostringbuff (const TValue *obj, char *buff);
 LUAI_FUNC lu_byte luaO_hexavalue (int c);
 LUAI_FUNC void luaO_tostring (lua_State *L, TValue *obj);
-LUAI_FUNC const char *luaO_pushvfstring (lua_State *L, const char *fmt,
-                                                       va_list argp);
+LUAI_FUNC const char *luaO_pushvfstring(lua_State *L, const char *fmt,
+                                        va_list *argp);
 LUAI_FUNC const char *luaO_pushfstring (lua_State *L, const char *fmt, ...);
 LUAI_FUNC void luaO_chunkid (char *out, const char *source, size_t srclen);
 
