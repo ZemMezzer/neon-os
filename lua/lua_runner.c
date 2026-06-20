@@ -162,7 +162,32 @@ static void lua_program_exit_handler(
 }
 
 
-int lua_run_file(const char* path) {
+static void neon_lua_set_args(
+    lua_State* state,
+    const char* path,
+    int argc,
+    char** argv
+) {
+    int index;
+
+    lua_createtable(state, argc, 1);
+
+    lua_pushstring(state, path);
+    lua_rawseti(state, -2, 0);
+
+    for (index = 0; index < argc; index++) {
+        lua_pushstring(
+            state,
+            argv[index] != NULL ? argv[index] : ""
+        );
+        lua_rawseti(state, -2, index + 1);
+    }
+
+    lua_setglobal(state, "arg");
+}
+
+
+int lua_run_file_args(const char* path, int argc, char** argv) {
     LuaFileReader reader;
     LuaRunSession session;
     lua_State* state;
@@ -171,6 +196,11 @@ int lua_run_file(const char* path) {
 
     if (path == NULL || path[0] == '\0') {
         console_write("lua: no script path\n");
+        return LUA_RUNNER_ERR_INVALID_PATH;
+    }
+
+    if (argc < 0 || (argc > 0 && argv == NULL)) {
+        console_write("lua: invalid arguments\n");
         return LUA_RUNNER_ERR_INVALID_PATH;
     }
 
@@ -224,6 +254,7 @@ int lua_run_file(const char* path) {
     luaL_requiref(state, "fs", luaopen_fs, 1);
     lua_pop(state, 1);
 
+
     status = lua_load(
         state,
         neon_lua_file_reader,
@@ -247,6 +278,8 @@ int lua_run_file(const char* path) {
         return LUA_RUNNER_ERR_LOAD;
     }
 
+    neon_lua_set_args(state, path, argc, argv);
+
     session.state = state;
 
     program_context_enter(
@@ -262,7 +295,14 @@ int lua_run_file(const char* path) {
     */
     console_suspend();
 
-    status = lua_pcall(state, 0, LUA_MULTRET, 0);
+    for (int index = 0; index < argc; index++) {
+        lua_pushstring(
+            state,
+            argv[index] != NULL ? argv[index] : ""
+        );
+    }
+
+    status = lua_pcall(state, argc, LUA_MULTRET, 0);
 
     /*
         Return to a clean terminal before reporting a Lua error or allowing
@@ -296,4 +336,8 @@ int lua_run_file(const char* path) {
     lua_close(state);
 
     return 0;
+}
+
+int lua_run_file(const char* path) {
+    return lua_run_file_args(path, 0, NULL);
 }

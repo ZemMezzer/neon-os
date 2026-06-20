@@ -14,6 +14,17 @@
 
 typedef int (*ShellCommandFn)(int argc, char** argv);
 
+/*
+    Optional resolver for commands not registered as built-ins.
+    Return nonzero when the resolver handled argv; write the program
+    exit status to out_status.
+*/
+typedef int (*ShellCommandFallbackFn)(
+    int argc,
+    char** argv,
+    int* out_status
+);
+
 typedef struct ShellCommand {
     const char* name;
     const char* help;
@@ -292,6 +303,7 @@ static int cmd_echo(int argc, char** argv);
 
 static ShellCommand commands[SHELL_MAX_COMMANDS];
 static int command_count = 0;
+static ShellCommandFallbackFn command_fallback = NULL;
 
 int shell_register_command(
     const char* name,
@@ -312,6 +324,11 @@ int shell_register_command(
 
     command_count++;
 
+    return 0;
+}
+
+int shell_set_command_fallback(ShellCommandFallbackFn fn) {
+    command_fallback = fn;
     return 0;
 }
 
@@ -636,6 +653,18 @@ int shell_commands_execute(const char* line) {
     for (int i = 0; i < command_count; i++) {
         if (shell_str_equal(argv[0], commands[i].name)) {
             return commands[i].fn(argc, argv);
+        }
+    }
+
+    /*
+        Built-in commands always win. A registered subsystem can resolve
+        the remaining name, for example the Lua PATH launcher.
+    */
+    if (command_fallback != NULL) {
+        int fallback_status = 0;
+
+        if (command_fallback(argc, argv, &fallback_status) != 0) {
+            return fallback_status;
         }
     }
 

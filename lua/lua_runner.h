@@ -15,3 +15,4 @@
 #define LUA_RUNNER_ERR_RUNTIME        (-6)
 
 int lua_run_file(const char* path);
+int lua_run_file_args(const char* path, int argc, char** argv);
