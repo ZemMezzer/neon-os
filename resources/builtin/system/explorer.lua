@@ -10,7 +10,8 @@
 --   Up/Down or W/S      move selection
 --   Home/End            first / last item
 --   [ / ]               previous / next page
---   Enter or Right      open directory
+--   Enter               open directory / run selected Lua file
+--   Right               open directory
 --   Backspace or Left   parent directory
 --   D or Delete         delete selected item
 --   N                   create directory
@@ -288,7 +289,7 @@ local function open_directory(item)
     end
 
     if not item.isDir then
-        set_status("Selected file: " .. item.name)
+        set_status("Not a directory: " .. item.name)
         return
     end
 
@@ -296,6 +297,76 @@ local function open_directory(item)
     selected = 1
     offset = 1
     refresh("Opened " .. display_path(cwd))
+end
+
+local function is_lua_file(item)
+    if not item or item.parent or item.isDir then
+        return false
+    end
+
+    local name = string.lower(tostring(item.name or ""))
+
+    return #name >= 4 and name:sub(-4) == ".lua"
+end
+
+local function run_lua_file(item)
+    if not is_lua_file(item) then
+        set_status("Not a Lua file: " .. tostring(item and item.name or ""))
+        return
+    end
+
+    -- os.execute() calls NeonOS' synchronous shell command runner. This
+    -- starts a nested Lua program, so os.exit() in the launched script
+    -- exits only that child program and returns here afterward.
+    local command = "lua " .. item.path
+    local ok
+    local result
+    local reason
+    local code
+
+    set_status("Launching " .. item.name)
+
+    -- Do not leave Explorer's old frame behind while the child initializes.
+    gfx.clear(COLOR.black)
+    gfx.present()
+
+    ok, result, reason, code = pcall(os.execute, command)
+
+    if not ok then
+        refresh("Lua launch failed: " .. tostring(result))
+        return
+    end
+
+    -- Lua versions differ slightly in os.execute() return values:
+    -- true, "exit", 0  |  0  |  nil, "exit", nonzero.
+    if result == true or result == 0 or code == 0 then
+        refresh("Returned from " .. item.name)
+    else
+        local status = code
+
+        if status == nil then
+            status = result
+        end
+
+        refresh("Lua exited with " .. tostring(status))
+    end
+end
+
+local function open_selected_item()
+    local item = selected_item()
+
+    if not item then
+        set_status("Nothing selected")
+        return
+    end
+
+    if item.isDir then
+        open_directory(item)
+    elseif is_lua_file(item) then
+        run_lua_file(item)
+    else
+        set_status("Unsupported file: " .. item.name)
+    end
 end
 
 local function go_parent()
@@ -428,7 +499,7 @@ local function draw_ui()
         text_at(PADDING, SCREEN_HEIGHT - 42, "Backspace/Left: parent   Tab: cancel", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "Source: " .. target_mode.source.name, COLOR.warning, footer_chars)
     else
-        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/Right open  Backspace/Left parent  W/S or arrows move", COLOR.text, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter open/run Lua  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "D delete  N mkdir  R rename  C copy  M move  F refresh", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "I info  [/] page  Home/End bounds  Q quit", COLOR.muted, footer_chars)
     end
@@ -861,7 +932,12 @@ local function handle_browse_key(key)
         return
     end
 
-    if key == input.ENTER or key == input.RIGHT then
+    if key == input.ENTER then
+        open_selected_item()
+        return
+    end
+
+    if key == input.RIGHT then
         open_directory(selected_item())
         return
     end
