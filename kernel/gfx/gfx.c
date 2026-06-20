@@ -42,7 +42,7 @@ void gfx_draw_char(int x, int y, char c, uint32_t color, int scale) {
     for (int col = 0; col < 5; col++) {
         uint8_t line = glyph[col];
 
-        for (int row = 0; row < 7; row++) {
+        for (int row = 0; row < 8; row++) {
             if (line & (1 << row)) {
                 gfx_fill_rect(
                     x + col * scale,
