@@ -17,6 +17,11 @@
 local gfx = require("gfx")
 local input = require("input")
 
+-- Games must ignore queued keyboard auto-repeat events.  Newer NeonOS input
+-- builds expose poll_latest() for that purpose; older builds still work with
+-- ordinary poll(), only without the repeat-backlog protection.
+local poll_game_input = input.poll_latest or input.poll
+
 local SCREEN_W = gfx.width()
 local SCREEN_H = gfx.height()
 
@@ -555,8 +560,9 @@ last_time = now()
 last_draw = last_time
 
 while running do
-    -- One non-blocking input read per frame: compatible with NeonOS input.poll().
-    handle_key(input.poll())
+    -- poll_latest() drains queued auto-repeat input, so releasing Left/Right
+    -- stops the paddle immediately instead of replaying stale key presses.
+    handle_key(poll_game_input())
 
     local current = now()
     local elapsed = current - last_time
