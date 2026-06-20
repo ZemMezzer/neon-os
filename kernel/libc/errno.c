@@ -1,3 +1,3 @@
 #include "errno.h"
 
-int neon_errno = 0;
+int errno = 0;

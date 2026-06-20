@@ -1,4 +1,5 @@
 target_sources(third_party PRIVATE
+    # Lua core
     src/lapi.c
     src/lcode.c
     src/lctype.c
@@ -20,6 +21,23 @@ target_sources(third_party PRIVATE
     src/lvm.c
     src/lzio.c
 
+    # Lua auxiliary library
+    src/lauxlib.c
+
+    # Lua standard libraries
+    src/lbaselib.c
+    src/lcorolib.c
+    src/ldblib.c
+    src/liolib.c
+    src/lmathlib.c
+    src/loadlib.c
+    src/loslib.c
+    src/lstrlib.c
+    src/ltablib.c
+    src/lutf8lib.c
+    src/linit.c
+
+    # NeonOS glue
     lua_shell.c
     lua_runner.c
 )

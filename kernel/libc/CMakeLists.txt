@@ -10,6 +10,7 @@ target_sources(objects PRIVATE
     strtod.c
     locale.c
     math.c
+    time.c
 
     setjmp.S
 )

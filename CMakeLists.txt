@@ -13,7 +13,7 @@ add_library(third_party OBJECT)
 target_compile_options(objects PRIVATE
     -Wall
     -Wextra
-    -O2
+    -O0
     -ffreestanding
     -fno-builtin
     -fno-tree-loop-distribute-patterns
@@ -57,7 +57,7 @@ add_executable(${PROJECT_NAME}
 target_compile_options(${PROJECT_NAME} PRIVATE
     -Wall
     -Wextra
-    -O2
+    -O0
     -ffreestanding
     -fno-builtin
     -fno-tree-loop-distribute-patterns

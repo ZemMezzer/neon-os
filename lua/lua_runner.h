@@ -1,15 +1,17 @@
 #pragma once
 
 /*
-    Runs a text Lua script stored on the mounted FatFs volume.
+    Executes a Lua source file from the mounted FatFs volume.
 
-    Returns:
-      0  - script completed successfully
-     -1  - invalid path
-     -2  - could not create Lua state
-     -3  - could not open script file
-     -4  - file read error
-     -5  - Lua load/parse error
-     -6  - Lua runtime error
+    Return value:
+      0..255  - script completed normally or called os.exit(code)
+      < 0     - NeonOS loader/runtime failure
 */
+#define LUA_RUNNER_ERR_INVALID_PATH   (-1)
+#define LUA_RUNNER_ERR_STATE_CREATE   (-2)
+#define LUA_RUNNER_ERR_OPEN_FILE      (-3)
+#define LUA_RUNNER_ERR_READ_FILE      (-4)
+#define LUA_RUNNER_ERR_LOAD           (-5)
+#define LUA_RUNNER_ERR_RUNTIME        (-6)
+
 int lua_run_file(const char* path);

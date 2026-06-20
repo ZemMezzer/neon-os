@@ -1,4 +1,5 @@
 #include "shell_commands.h"
+#include "program_runtime.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -617,34 +618,41 @@ static int cmd_echo(int argc, char** argv) {
     return 0;
 }
 
-void shell_commands_execute(const char* line) {
+int shell_commands_execute(const char* line) {
     char work[SHELL_LINE_MAX];
     char* argv[SHELL_MAX_ARGS];
     int argc;
 
     if (!line || line[0] == 0) {
-        return;
+        return 0;
     }
 
     argc = shell_parse_line(line, work, sizeof(work), argv);
 
     if (argc == 0) {
-        return;
+        return 0;
     }
 
     for (int i = 0; i < command_count; i++) {
         if (shell_str_equal(argv[0], commands[i].name)) {
-            commands[i].fn(argc, argv);
-            return;
+            return commands[i].fn(argc, argv);
         }
     }
 
     console_write("Unknown command: ");
     console_write(argv[0]);
     console_write("\n");
+
+    return 127;
 }
 
 void shell_commands_init(void) {
+    /*
+        The generic runtime does not know the shell implementation.
+        The shell supplies its synchronous executor at initialization.
+    */
+    program_set_command_executor(shell_commands_execute);
+
     shell_register_command("help", "show commands", cmd_help);
     shell_register_command("pwd", "show current directory", cmd_pwd);
     shell_register_command("cd", "change directory", cmd_cd);

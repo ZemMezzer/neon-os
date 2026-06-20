@@ -15,4 +15,4 @@ int shell_resolve_path(
 );
 
 void shell_commands_init(void);
-void shell_commands_execute(const char* line);
+int shell_commands_execute(const char* line);
