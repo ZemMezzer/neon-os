@@ -7,7 +7,6 @@
 
 #include "ff.h"
 #include "console.h"
-#include "uart.h"
 
 #define NEON_STDIO_MAX_OPEN_FILES 16
 #define NEON_STDIO_PATH_MAX 512
@@ -189,25 +188,17 @@ static void stdio_reset_file_fields(FILE* stream, int index) {
 static int stdio_ensure_mounted(void) {
     FRESULT result;
 
-    uart_puts("[stdio] ensure_mounted entered\n");
-
     if (stdio_mounted) {
-        uart_puts("[stdio] already mounted\n");
         return 0;
     }
-
-    uart_puts("[stdio] before f_mount\n");
     result = f_mount(&stdio_fs, "0:", 1);
-    uart_puts("[stdio] after f_mount\n");
 
     if (result != FR_OK) {
-        uart_puts("[stdio] f_mount returned error\n");
         stdio_set_errno_from_fresult(result);
         return -1;
     }
 
     stdio_mounted = 1;
-    uart_puts("[stdio] mount complete\n");
     return 0;
 }
 
@@ -215,32 +206,10 @@ static int stdio_ensure_mounted(void) {
 int stdio_init(void) {
     int result;
 
-    uart_puts("[stdio] init entered\n");
-    uart_puts("[stdio] before open-file reset\n");
-
     for (int i = 0; i < NEON_STDIO_MAX_OPEN_FILES; i++) {
-        if (i == 0) uart_puts("[stdio] reset slot 0\n");
-        if (i == 1) uart_puts("[stdio] reset slot 1\n");
-        if (i == 2) uart_puts("[stdio] reset slot 2\n");
-        if (i == 3) uart_puts("[stdio] reset slot 3\n");
-        if (i == 4) uart_puts("[stdio] reset slot 4\n");
-        if (i == 5) uart_puts("[stdio] reset slot 5\n");
-        if (i == 6) uart_puts("[stdio] reset slot 6\n");
-        if (i == 7) uart_puts("[stdio] reset slot 7\n");
-        if (i == 8) uart_puts("[stdio] reset slot 8\n");
-        if (i == 9) uart_puts("[stdio] reset slot 9\n");
-        if (i == 10) uart_puts("[stdio] reset slot 10\n");
-        if (i == 11) uart_puts("[stdio] reset slot 11\n");
-        if (i == 12) uart_puts("[stdio] reset slot 12\n");
-        if (i == 13) uart_puts("[stdio] reset slot 13\n");
-        if (i == 14) uart_puts("[stdio] reset slot 14\n");
-        if (i == 15) uart_puts("[stdio] reset slot 15\n");
 
         stdio_reset_file_fields(&open_files[i], i);
     }
-
-    uart_puts("[stdio] after open-file reset\n");
-    uart_puts("[stdio] before std streams\n");
 
     stdin_object.used = 1;
     stdin_object.eof = 0;
@@ -257,13 +226,8 @@ int stdio_init(void) {
     stderr_object.error = 0;
     stderr_object.kind = NEON_FILE_STDERR;
 
-    uart_puts("[stdio] after std streams\n");
-
     stdio_mounted = 0;
-
-    uart_puts("[stdio] before ensure_mounted\n");
     result = stdio_ensure_mounted();
-    uart_puts("[stdio] after ensure_mounted\n");
 
     return result;
 }
@@ -790,7 +754,6 @@ static void stdio_write_console_chunk(const char* data, size_t size) {
         buffer[chunk] = '\0';
 
         console_write(buffer);
-        uart_puts(buffer);
 
         position += chunk;
     }
