@@ -14,7 +14,6 @@ Boots without UEFI. No Linux. No runtime dependencies.
 
 - Boots from scratch without UEFI or bootloader abstraction
 - FAT16 filesystem support via FatFs (up to 1 GB)
-- 800×600 RGB framebuffer display
 - PS/2 keyboard input
 - Interactive shell with built-in commands
 - Lua scripting environment with native APIs for graphics, input, and filesystem
@@ -37,7 +36,10 @@ Boots without UEFI. No Linux. No runtime dependencies.
 | `mv <old> <new>` | Rename or move a file |
 | `echo <text>` | Print text to console |
 | `lua <script>` | Run a Lua script |
-| `path` | Show or edit the Lua program search path |
+| `path` | Show or edit the program search path (like PATH in classic systems) |
+| `alias` | Add or remove file associations |
+| `open <file>` | Open a file using its alias association |
+| `sh <script>` | Run a shell script |
 
 ---
 
@@ -66,6 +68,7 @@ Coordinates range from −4096 to 4096.
 
 ```lua
 input.poll()              -- returns key_code, modifiers (or nil if no event)
+input.poll_latest()       -- drains the queue, returns only the most recent event
 input.pressed(key_code)   -- true if the given key was pressed this frame
 input.any_pressed()       -- true if any key was pressed this frame
 ```
@@ -78,13 +81,13 @@ input.LEFT,  input.RIGHT, input.UP,   input.DOWN
 input.HOME,  input.END,   input.DELETE
 input.PAGE_UP, input.PAGE_DOWN, input.INSERT
 input.ENTER, input.BACKSPACE, input.TAB, input.SPACE
-input.ESCAPE, input.F2
-
--- Modifier constants
-input.MOD_SHIFT, input.MOD_CTRL, input.MOD_ALT
+input.ESCAPE
+input.F1, input.F2, input.F3,  input.F4
+input.F5, input.F6, input.F7,  input.F8
+input.F9, input.F10, input.F11, input.F12
 ```
 
-**Modifiers table** (returned by `input.poll()`):
+**Modifiers table** (returned by `input.poll()` and `input.poll_latest()`):
 
 ```lua
 local key, mods = input.poll()
@@ -92,10 +95,17 @@ if key and mods.ctrl and key == input.S then
     -- Ctrl+S
 end
 -- mods.shift, mods.ctrl, mods.alt (booleans)
--- mods.mask  (raw bitmask)
 ```
 
 Input is frame-locked: one event is consumed per `gfx.present()` call.
+`poll_latest()` is useful for fast-repeat scenarios (e.g. scrolling) where only the last held key matters.
+
+### `shell` — Shell
+
+```lua
+shell.exec(command)        -- execute a shell command string, returns exit status
+shell.run_script(path)     -- run a shell script file, returns exit status
+```
 
 ### `fs` — Filesystem
 
