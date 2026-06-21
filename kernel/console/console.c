@@ -1,7 +1,10 @@
 #include "console.h"
-#include "gfx.h"
 #include "framebuffer.h"
 #include "uart.h"
+
+#if GFX_ENABLED
+    #include "gfx.h"
+#endif
 
 #define CONSOLE_BG 0x00000000
 #define CONSOLE_FG 0x00FFFFFF
@@ -45,6 +48,7 @@ static void console_draw_cursor_at(int cell_x, int cell_y, unsigned int color) {
     px = cell_x * CHAR_WIDTH;
     py = cell_y * CHAR_HEIGHT + CHAR_HEIGHT - CONSOLE_CURSOR_HEIGHT;
 
+#if GFX_ENABLED
     gfx_fill_rect(
         px,
         py,
@@ -52,6 +56,7 @@ static void console_draw_cursor_at(int cell_x, int cell_y, unsigned int color) {
         CONSOLE_CURSOR_HEIGHT,
         color
     );
+#endif
 }
 
 static void console_erase_drawn_cursor(void) {
@@ -98,8 +103,9 @@ void console_clear(void) {
     if (console_suspended) {
         return;
     }
-
+#if GFX_ENABLED
     gfx_clear(CONSOLE_BG);
+#endif
 
     cursor_x = 0;
     cursor_y = 0;
@@ -108,7 +114,9 @@ void console_clear(void) {
 
     console_redraw_cursor_if_needed();
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 void console_suspend(void) {
@@ -128,8 +136,10 @@ void console_suspend(void) {
     cursor_x = 0;
     cursor_y = 0;
 
+#if GFX_ENABLED
     gfx_clear(CONSOLE_BG);
     gfx_present();
+#endif
 }
 
 void console_resume(void) {
@@ -149,9 +159,11 @@ void console_resume(void) {
     ) ? 1 : 0;
     suspended_cursor_visible = 0;
 
+#if GFX_ENABLED
     gfx_clear(CONSOLE_BG);
     console_redraw_cursor_if_needed();
     gfx_present();
+#endif
 }
 
 void console_cursor_enable(int enabled) {
@@ -166,8 +178,9 @@ void console_cursor_enable(int enabled) {
     console_cursor_ticks = 0;
 
     console_redraw_cursor_if_needed();
-
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 void console_cursor_show(void) {
@@ -182,7 +195,9 @@ void console_cursor_show(void) {
 
     console_draw_current_cursor();
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 void console_cursor_hide(void) {
@@ -195,7 +210,9 @@ void console_cursor_hide(void) {
     console_cursor_visible = 0;
     console_cursor_ticks = 0;
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 void console_cursor_update(void) {
@@ -219,7 +236,9 @@ void console_cursor_update(void) {
         console_draw_current_cursor();
     }
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 static void console_newline(void) {
@@ -227,7 +246,9 @@ static void console_newline(void) {
     cursor_y++;
 
     if (cursor_y >= rows) {
+#if GFX_ENABLED
         gfx_clear(CONSOLE_BG);
+#endif
 
         cursor_x = 0;
         cursor_y = 0;
@@ -236,7 +257,10 @@ static void console_newline(void) {
     }
 }
 
+
 void console_putc(char c) {
+    uart_putc(c);
+
     if (console_suspended) {
         return;
     }
@@ -246,17 +270,22 @@ void console_putc(char c) {
     if (c == '\n') {
         console_newline();
         console_redraw_cursor_if_needed();
+#if GFX_ENABLED
         gfx_present();
+#endif
         return;
     }
 
     if (c == '\r') {
         cursor_x = 0;
         console_redraw_cursor_if_needed();
+#if GFX_ENABLED
         gfx_present();
+#endif
         return;
     }
 
+#if GFX_ENABLED
     gfx_draw_char(
         cursor_x * CHAR_WIDTH,
         cursor_y * CHAR_HEIGHT,
@@ -264,6 +293,7 @@ void console_putc(char c) {
         CONSOLE_FG,
         CHAR_SCALE
     );
+#endif
 
     cursor_x++;
 
@@ -273,17 +303,13 @@ void console_putc(char c) {
 
     console_redraw_cursor_if_needed();
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 void console_write(const char* text) {
     if (!text) {
-        return;
-    }
-
-    uart_puts(text);
-
-    if (console_suspended) {
         return;
     }
 
@@ -302,12 +328,19 @@ void console_backspace(void) {
 
     if (cursor_x <= 0) {
         console_redraw_cursor_if_needed();
+#if GFX_ENABLED
         gfx_present();
+#endif
         return;
     }
 
     cursor_x--;
 
+    uart_putc('\b');
+    uart_putc(' ');
+    uart_putc('\b');
+
+#if GFX_ENABLED
     gfx_fill_rect(
         cursor_x * CHAR_WIDTH,
         cursor_y * CHAR_HEIGHT,
@@ -315,10 +348,13 @@ void console_backspace(void) {
         CHAR_HEIGHT,
         CONSOLE_BG
     );
+#endif
 
     console_redraw_cursor_if_needed();
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 int console_get_cursor_x(void) {
@@ -361,7 +397,9 @@ void console_set_cursor_pos(int x, int y) {
 
     console_redraw_cursor_if_needed();
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }
 
 void console_clear_line_from_cursor(void) {
@@ -380,6 +418,7 @@ void console_clear_line_from_cursor(void) {
     width = FB_WIDTH - px;
 
     if (width > 0) {
+#if GFX_ENABLED
         gfx_fill_rect(
             px,
             py,
@@ -387,9 +426,12 @@ void console_clear_line_from_cursor(void) {
             CHAR_HEIGHT,
             CONSOLE_BG
         );
+#endif
     }
 
     console_redraw_cursor_if_needed();
 
+#if GFX_ENABLED
     gfx_present();
+#endif
 }

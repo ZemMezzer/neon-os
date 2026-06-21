@@ -6,6 +6,7 @@ set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
 set(PLATFORM "" CACHE STRING "Target platform")
 
 option(LUA_ENABLED "Lua" ON)
+option(GFX_ENABLED "Lua" ON)
 option(BUILTIN_RESOURCES_ENABLED "Lua" ON)
 
 add_library(objects OBJECT)
@@ -54,6 +55,16 @@ if(BUILTIN_RESOURCES_ENABLED)
         BUILTIN_RESOURCES_ENABLED=1
     )
     add_subdirectory(resources)
+endif()
+
+if(GFX_ENABLED)
+    target_compile_definitions(objects PRIVATE
+        GFX_ENABLED=1
+    )
+
+    target_compile_definitions(third_party PRIVATE
+        GFX_ENABLED=1
+    )
 endif()
 
 add_executable(${PROJECT_NAME}

@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "input.h"
+#include "uart.h"
 #include "virtio_mmio.h"
 
 #define KEY_ESC        1
@@ -616,8 +617,149 @@ static void virtio_keyboard_update(void) {
     virtqueue_notify();
 }
 
+/*
+    QEMU's "-serial stdio" connection delivers host terminal input through
+    the PL011 UART.  Feed it into the same queue used by the VirtIO keyboard,
+    so the shell and Lua programs can accept either keyboard source.
+*/
+#define SERIAL_INPUT_BYTES_PER_UPDATE 64
+
+typedef enum SerialEscapeState {
+    SERIAL_ESCAPE_NONE = 0,
+    SERIAL_ESCAPE_GOT_ESC,
+    SERIAL_ESCAPE_CSI
+} SerialEscapeState;
+
+static SerialEscapeState serial_escape_state = SERIAL_ESCAPE_NONE;
+static unsigned int serial_csi_number = 0;
+static int serial_skip_lf = 0;
+
+static void serial_reset_escape(void) {
+    serial_escape_state = SERIAL_ESCAPE_NONE;
+    serial_csi_number = 0;
+}
+
+static void serial_finish_csi(unsigned char final) {
+    if (final == 'A') {
+        input_push_key(INPUT_KEY_UP);
+    } else if (final == 'B') {
+        input_push_key(INPUT_KEY_DOWN);
+    } else if (final == 'C') {
+        input_push_key(INPUT_KEY_RIGHT);
+    } else if (final == 'D') {
+        input_push_key(INPUT_KEY_LEFT);
+    } else if (final == 'H') {
+        input_push_key(INPUT_KEY_HOME);
+    } else if (final == 'F') {
+        input_push_key(INPUT_KEY_END);
+    } else if (final == '~') {
+        if (serial_csi_number == 1 || serial_csi_number == 7) {
+            input_push_key(INPUT_KEY_HOME);
+        } else if (serial_csi_number == 2) {
+            input_push_key(INPUT_KEY_INSERT);
+        } else if (serial_csi_number == 3) {
+            input_push_key(INPUT_KEY_DELETE);
+        } else if (serial_csi_number == 4 || serial_csi_number == 8) {
+            input_push_key(INPUT_KEY_END);
+        } else if (serial_csi_number == 5) {
+            input_push_key(INPUT_KEY_PAGE_UP);
+        } else if (serial_csi_number == 6) {
+            input_push_key(INPUT_KEY_PAGE_DOWN);
+        }
+    }
+
+    serial_reset_escape();
+}
+
+static void serial_process_byte(unsigned char byte) {
+    if (serial_escape_state == SERIAL_ESCAPE_GOT_ESC) {
+        if (byte == '[') {
+            serial_escape_state = SERIAL_ESCAPE_CSI;
+            serial_csi_number = 0;
+            return;
+        }
+
+        /* A normal character followed a standalone Escape key. */
+        input_push_key(INPUT_KEY_ESCAPE);
+        serial_reset_escape();
+        serial_process_byte(byte);
+        return;
+    }
+
+    if (serial_escape_state == SERIAL_ESCAPE_CSI) {
+        if (byte >= '0' && byte <= '9') {
+            if (serial_csi_number < 999) {
+                serial_csi_number =
+                    serial_csi_number * 10u + (unsigned int)(byte - '0');
+            }
+            return;
+        }
+
+        /* Ignore modifier parameters, e.g. ESC [ 1 ; 5 D (Ctrl+Left). */
+        if (byte == ';' || byte == '?' || byte == '>') {
+            return;
+        }
+
+        serial_finish_csi(byte);
+        return;
+    }
+
+    if (byte == 0x1B) {
+        serial_escape_state = SERIAL_ESCAPE_GOT_ESC;
+        return;
+    }
+
+    /* Host terminals may send CR, LF, or CRLF for Enter. */
+    if (byte == '\r') {
+        serial_skip_lf = 1;
+        input_push_char('\n');
+        return;
+    }
+
+    if (byte == '\n') {
+        if (serial_skip_lf) {
+            serial_skip_lf = 0;
+            return;
+        }
+
+        input_push_char('\n');
+        return;
+    }
+
+    serial_skip_lf = 0;
+
+    /* Backspace may be sent as BS (8) or DEL (127). */
+    if (byte == '\b' || byte == 127 || (byte >= 32 && byte <= 126)) {
+        input_push_char((char)byte);
+    }
+}
+
+static void uart_input_update(void) {
+    unsigned int count = 0;
+
+    while (count < SERIAL_INPUT_BYTES_PER_UPDATE) {
+        /*
+            uart_can_read() is non-blocking.  uart_getc() is safe immediately
+            afterwards because this OS has one UART reader.
+        */
+        if (!uart_can_read()) {
+            break;
+        }
+
+        serial_process_byte((unsigned char)uart_getc());
+        count++;
+    }
+
+    /* Deliver a lone Escape after the UART receive FIFO has drained. */
+    if (count == 0 && serial_escape_state == SERIAL_ESCAPE_GOT_ESC) {
+        input_push_key(INPUT_KEY_ESCAPE);
+        serial_reset_escape();
+    }
+}
+
 void input_update(void) {
     virtio_keyboard_update();
+    uart_input_update();
 }
 
 int input_take_global_close_request(void) {

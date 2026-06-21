@@ -12,7 +12,10 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#if GFX_ENABLED
 #include "lua_gfx.h"
+#endif
+
 #include "lua_input.h"
 #include "lua_fs.h"
 
@@ -249,8 +252,10 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
 
     luaL_openlibs(state);
 
+#if GFX_ENABLED
     luaL_requiref(state, "gfx", luaopen_gfx, 1);
     lua_pop(state, 1);
+#endif
 
     luaL_requiref(state, "input", luaopen_input, 1);
     lua_pop(state, 1);

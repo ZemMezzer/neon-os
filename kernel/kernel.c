@@ -1,4 +1,7 @@
+#if GFX_ENABLED
 #include "gfx.h"
+#endif
+
 #include "console.h"
 #include "input.h"
 #include "stdio.h"
@@ -19,7 +22,11 @@ static void halt(void) {
 }
 
 void kernel_main(void) {
+
+#if GFX_ENABLED
     gfx_init();
+#endif
+
     console_init();
 
     if (stdio_init() != 0) {
