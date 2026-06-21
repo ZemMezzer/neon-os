@@ -1,4 +1,6 @@
 #include "console.h"
+
+#include <stddef.h>
 #include "framebuffer.h"
 #include "uart.h"
 
@@ -30,8 +32,31 @@ static int console_cursor_drawn = 0;
 static int console_cursor_drawn_x = 0;
 static int console_cursor_drawn_y = 0;
 
-static int console_suspended = 0;
+static int console_suspend_depth = 0;
 static int suspended_cursor_visible = 0;
+
+static int console_is_suspended(void) {
+    return console_suspend_depth > 0;
+}
+
+static ConsoleOutputCallback console_output_callback = NULL;
+static void* console_output_callback_userdata = NULL;
+
+ConsoleOutputTarget console_set_output_callback(
+    ConsoleOutputCallback callback,
+    void* userdata
+) {
+    ConsoleOutputTarget previous;
+
+    previous.callback = console_output_callback;
+    previous.userdata = console_output_callback_userdata;
+
+    console_output_callback = callback;
+    console_output_callback_userdata = userdata;
+
+    return previous;
+}
+
 
 static void console_draw_cursor_at(int cell_x, int cell_y, unsigned int color) {
     int px;
@@ -100,7 +125,7 @@ void console_init(void) {
 }
 
 void console_clear(void) {
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 #if GFX_ENABLED
@@ -120,7 +145,8 @@ void console_clear(void) {
 }
 
 void console_suspend(void) {
-    if (console_suspended) {
+    if (console_suspend_depth > 0) {
+        console_suspend_depth++;
         return;
     }
 
@@ -131,7 +157,7 @@ void console_suspend(void) {
     console_cursor_ticks = 0;
     console_cursor_drawn = 0;
 
-    console_suspended = 1;
+    console_suspend_depth = 1;
 
     cursor_x = 0;
     cursor_y = 0;
@@ -143,11 +169,15 @@ void console_suspend(void) {
 }
 
 void console_resume(void) {
-    if (!console_suspended) {
+    if (console_suspend_depth <= 0) {
         return;
     }
 
-    console_suspended = 0;
+    console_suspend_depth--;
+
+    if (console_suspend_depth > 0) {
+        return;
+    }
 
     cursor_x = 0;
     cursor_y = 0;
@@ -167,7 +197,7 @@ void console_resume(void) {
 }
 
 void console_cursor_enable(int enabled) {
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 
@@ -184,7 +214,7 @@ void console_cursor_enable(int enabled) {
 }
 
 void console_cursor_show(void) {
-    if (console_suspended || !console_cursor_enabled) {
+    if (console_is_suspended() || !console_cursor_enabled) {
         return;
     }
 
@@ -201,7 +231,7 @@ void console_cursor_show(void) {
 }
 
 void console_cursor_hide(void) {
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 
@@ -216,7 +246,7 @@ void console_cursor_hide(void) {
 }
 
 void console_cursor_update(void) {
-    if (console_suspended || !console_cursor_enabled) {
+    if (console_is_suspended() || !console_cursor_enabled) {
         return;
     }
 
@@ -259,9 +289,13 @@ static void console_newline(void) {
 
 
 void console_putc(char c) {
+    if (console_output_callback != NULL) {
+        console_output_callback(c, console_output_callback_userdata);
+    }
+
     uart_putc(c);
 
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 
@@ -320,7 +354,7 @@ void console_write(const char* text) {
 }
 
 void console_backspace(void) {
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 
@@ -370,7 +404,7 @@ int console_get_columns(void) {
 }
 
 void console_set_cursor_pos(int x, int y) {
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 
@@ -407,7 +441,7 @@ void console_clear_line_from_cursor(void) {
     int py;
     int width;
 
-    if (console_suspended) {
+    if (console_is_suspended()) {
         return;
     }
 

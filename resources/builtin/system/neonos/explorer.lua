@@ -1,39 +1,3 @@
--- A framebuffer file manager for NeonOS Lua.
--- Requires the built-in modules:
---   local gfx = require("gfx")
---   local input = require("input")
---   local fs = require("fs")
---
--- Controls
---   Up/Down or W/S      move selection
---   Home/End            first / last item
---   [ / ]               previous / next page
---   Enter               open directory / open selected file
---   Right               open directory
---   Backspace or Left   parent directory
---   D or Delete         delete selected item
---   N                   create directory
---   R                   rename selected item
---   C                   copy selected item
---   M                   move selected item
---   F                   refresh
---   I                   show selected-item information
---   Q                   quit
---
--- In copy/move target selection:
---   Right/O             open selected folder
---   Enter               choose the currently open folder
---   Backspace/Left      parent folder
---   Tab                 cancel
---
--- In picker modes:
---   N                   create a new folder and open it
---
--- In text prompts:
---   Enter               confirm
---   Tab                 cancel
---   Backspace           erase one character
-
 local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
@@ -41,26 +5,52 @@ local shell = require("shell")
 
 local args = { ... }
 
+local THEME = {
+    bg_top = 0x00262523,
+    bg_upper = 0x00212020,
+    bg_mid = 0x001D1C1D,
+    bg_lower = 0x00181718,
+    bg_bottom = 0x00131315,
+
+    grid = 0x002B2C2E,
+
+    tile_selected = 0x00242424,
+    tile_glow = 0x00505052,
+
+    text = 0x00F4F4F4,
+    text_dim = 0x0090A9C0,
+    white = 0x00F4F4F4,
+    neon = 0x00E02915,
+    neon_dim = 0x006B2720,
+
+    tray = 0x00141415,
+    tray_border = 0x00333335,
+    tray_widget = 0x001D1D1F,
+}
+
 local COLOR = {
-    black = 0x000000,
-    panel = 0x101820,
-    panel2 = 0x18232D,
-    border = 0x365168,
-    text = 0xE8F1F8,
-    muted = 0x9CB4C4,
-    accent = 0x63C6FF,
-    directory = 0x8DDB7A,
-    folder_icon = 0xF2C75C,
-    folder_icon_light = 0xFFE39A,
-    folder_icon_dark = 0xA97828,
-    file_icon = 0xF4F8FC,
-    file_icon_fold = 0xB8D1E5,
-    file_icon_line = 0x78AFCF,
-    selected_bg = 0x285B7A,
-    selected_text = 0xFFFFFF,
-    warning = 0xFFD166,
-    error = 0xFF7A7A,
-    prompt = 0x162B39
+    black = THEME.bg_bottom,
+    panel = THEME.bg_mid,
+    panel2 = THEME.tray,
+    border = THEME.tray_border,
+    text = THEME.text,
+    muted = THEME.text_dim,
+    accent = THEME.neon,
+    directory = THEME.text,
+
+    folder_icon = 0x00BFC0C2,
+    folder_icon_light = THEME.white,
+    folder_icon_dark = 0x006C6D70,
+
+    file_icon = THEME.white,
+    file_icon_fold = 0x00D2D2D4,
+    file_icon_line = 0x0079797C,
+
+    selected_bg = THEME.tile_selected,
+    selected_text = THEME.white,
+    warning = THEME.neon,
+    error = THEME.neon,
+    prompt = THEME.tray_widget
 }
 
 local SCALE = 2
@@ -537,7 +527,7 @@ end
 
 local function draw_folder_row_icon(x, y, selected)
     local main = selected and COLOR.selected_text or COLOR.folder_icon
-    local light = selected and 0xFFFFFF or COLOR.folder_icon_light
+    local light = selected and COLOR.selected_text or COLOR.folder_icon_light
     local dark = selected and COLOR.accent or COLOR.folder_icon_dark
 
     gfx.fill_rect(x + 3, y + 3, 8, 3, dark)
@@ -575,6 +565,7 @@ local function draw_item_row(item, index, y)
             ROW_HEIGHT,
             COLOR.selected_bg
         )
+        gfx.fill_rect(PADDING, y - 1, 2, ROW_HEIGHT, COLOR.accent)
         foreground = COLOR.selected_text
     end
 
@@ -642,19 +633,25 @@ local function draw_ui()
     gfx.fill_rect(0, 0, SCREEN_WIDTH, HEADER_HEIGHT, COLOR.panel)
     draw_line(0, HEADER_HEIGHT - 1, SCREEN_WIDTH, COLOR.border)
 
-    local title = "NeonOS Explorer"
+    local title = "Explorer"
     if picker_mode == "file" then
-        title = "NeonOS Explorer - Select file"
+        title = "Explorer - Select file"
     elseif picker_mode == "folder" then
-        title = "NeonOS Explorer - Select folder"
+        title = "Explorer - Select folder"
     elseif picker_mode == "path" then
-        title = "NeonOS Explorer - Select file or folder"
+        title = "Explorer - Select file or folder"
     elseif target_mode then
-        title = "NeonOS Explorer - Select " .. target_mode.kind .. " target"
+        title = "Explorer - Select " .. target_mode.kind .. " target"
     end
 
     local title_chars = math.floor((SCREEN_WIDTH - PADDING * 2) / CHAR_WIDTH)
-    text_at(PADDING, 10, title, COLOR.accent, title_chars)
+    
+    local title_first = title:sub(1, 1)
+    local title_rest = title:sub(2)
+
+    text_at(PADDING, 10, title_first, COLOR.accent, 1)
+    text_at(PADDING + CHAR_WIDTH,10, title_rest, COLOR.text, title_chars - 1)
+
     text_at(PADDING, 30, display_path(cwd), COLOR.text, title_chars)
 
     local detail = status
@@ -688,19 +685,19 @@ local function draw_ui()
     if picker_mode == "file" then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter: open folder / choose file   Right: open folder", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "Selected file returns to Notes", COLOR.warning, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Selected file returns to Notes", COLOR.muted, footer_chars)
     elseif picker_mode == "folder" then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/Right: open folder   Space/E/F2: choose current folder", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "Choose current folder to return to Notes", COLOR.warning, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Choose current folder to return to Notes", COLOR.muted, footer_chars)
     elseif picker_mode == "path" then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter: open folder / choose file   Right: open folder", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "Space/E/F2: choose current folder   N: new folder", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "Backspace/Left: parent   Tab or Q: cancel", COLOR.warning, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
     elseif target_mode then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Right/O: open folder   Enter: choose this folder", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "Backspace/Left: parent   Tab: cancel", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "Source: " .. target_mode.source.name, COLOR.warning, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Source: " .. target_mode.source.name, COLOR.muted, footer_chars)
     else
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/E open  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "D delete  N mkdir  R rename  C copy  M move", COLOR.muted, footer_chars)

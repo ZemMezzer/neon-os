@@ -1,32 +1,3 @@
--- NeonOS Notes
---
--- A compact framebuffer text editor for NeonOS.
---
--- Launch:
---   notes
---   notes 0:/documents/todo.txt
---   notes 0:/documents
---
--- Editor controls:
---   Arrows                 move cursor
---   Shift + arrows         select text
---   Ctrl+A/C/X/V/Z         select all / copy / cut / paste / undo
---   Ctrl+O                open a file through Explorer command
---   Ctrl+S or F2           save
---   Ctrl+Shift+S           save as through Explorer
---   Ctrl+Q or Escape       exit (asks when unsaved)
---   Tab                    insert a tab
---   Backspace / Delete     erase
---   Enter                  new line
---   Page Up/Down           scroll
---   Home/End               line start/end
---
--- Explorer is started through shell.exec("explorer ..."), so its location
--- is resolved from PATH.txt rather than hard-coded in Notes.
---
--- The clipboard is internal to Notes. NeonOS does not yet expose a system
--- clipboard to Lua programs.
-
 local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
@@ -42,18 +13,37 @@ local FONT_W = 6 * FONT_SCALE
 local FONT_H = 8 * FONT_SCALE
 local LINE_H = FONT_H + 3
 
-local COLOR_BG = 0x000A101A
-local COLOR_PANEL = 0x000F1B2B
-local COLOR_BORDER = 0x00344F73
-local COLOR_TEXT = 0x00EDF5FF
-local COLOR_MUTED = 0x0093A9C4
-local COLOR_ACCENT = 0x0067DDFD
-local COLOR_GREEN = 0x005BE89C
-local COLOR_YELLOW = 0x00FFE45C
-local COLOR_RED = 0x00FF5C70
-local COLOR_SELECTION = 0x002C5E88
-local COLOR_CURSOR = 0x00FFE45C
-local COLOR_BLACK = 0x00000000
+-- NeonOS graphite / red palette.
+local THEME = {
+    bg_lower = 0x00181718,
+    bg_bottom = 0x00131315,
+
+    tile_selected = 0x00242424,
+    tile_glow = 0x00505052,
+
+    text = 0x00F4F4F4,
+    text_dim = 0x00A8A8AA,
+    white = 0x00F4F4F4,
+
+    neon = 0x00E02915,
+    neon_dim = 0x006B2720,
+
+    tray = 0x00141415,
+    tray_border = 0x00333335,
+    tray_widget = 0x001D1D1F,
+}
+
+local COLOR_BG = THEME.bg_lower
+local COLOR_PANEL = THEME.tray
+local COLOR_BORDER = THEME.tray_border
+local COLOR_TEXT = THEME.text
+local COLOR_MUTED = THEME.text_dim
+local COLOR_ACCENT = THEME.neon
+local COLOR_YELLOW = THEME.neon
+local COLOR_RED = THEME.neon
+local COLOR_SELECTION = THEME.neon_dim
+local COLOR_CURSOR = THEME.white
+local COLOR_BLACK = THEME.bg_bottom
 
 local DEFAULT_NOTES_DIR = "0:/notes"
 local PICK_RESULT_FILE = "0:/system/variables/.notes_pick.tmp"
@@ -755,6 +745,11 @@ local function draw_selection_background(line_index, line, lay, y)
     end
 end
 
+local function draw_notes_logo(x, y, scale)
+    gfx.text(x, y, "N", COLOR_ACCENT, scale)
+    gfx.text(x + 6 * scale, y, "OTES", COLOR_TEXT, scale)
+end
+
 local function draw_modal(lay)
     if not modal then
         return
@@ -797,7 +792,7 @@ local function draw_editor()
     gfx.fill_rect(0, 0, SCREEN_W, lay.header_h, COLOR_PANEL)
     gfx.fill_rect(0, lay.header_h - 1, SCREEN_W, 1, COLOR_BORDER)
 
-    gfx.text(12, 12, "NOTES", COLOR_YELLOW, 2)
+    draw_notes_logo(12, 12, 2)
 
     local title = display_path(file_path)
     if dirty then
@@ -848,7 +843,7 @@ local function draw_new_file_prompt(dir, value)
     local lay = layout()
 
     gfx.clear(COLOR_BG)
-    gfx.text(18, 24, "NOTES", COLOR_YELLOW, 3)
+    draw_notes_logo(18, 24, 3)
     gfx.text(18, 74, "CREATE A NEW NOTE", COLOR_TEXT, 2)
     gfx.text(18, 110, "FOLDER: " .. display_path(dir), COLOR_MUTED, 1)
 
@@ -858,7 +853,7 @@ local function draw_new_file_prompt(dir, value)
 
     gfx.fill_rect(box_x - 2, box_y - 2, box_w + 4, 82, COLOR_BORDER)
     gfx.fill_rect(box_x, box_y, box_w, 82, COLOR_PANEL)
-    gfx.text(box_x + 14, box_y + 12, "FILE NAME", COLOR_ACCENT, 1)
+    gfx.text(box_x + 14, box_y + 12, "FILE NAME", COLOR_TEXT, 1)
     gfx.fill_rect(box_x + 12, box_y + 32, box_w - 24, 25, COLOR_BLACK)
     gfx.rect(box_x + 12, box_y + 32, box_w - 24, 25, COLOR_BORDER)
     gfx.text(box_x + 18, box_y + 40, value, COLOR_TEXT, 1)

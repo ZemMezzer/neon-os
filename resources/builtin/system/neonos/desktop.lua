@@ -12,15 +12,16 @@ local screen_w = gfx.width()
 local screen_h = gfx.height()
 
 local COLOR = {
-    bg_top = 0x00040A19,
-    bg_mid = 0x0008142C,
-    bg_bottom = 0x000A2040,
-    grid = 0x00112647,
+    bg_top = 0x00262523,
+    bg_upper = 0x00212020,
+    bg_mid = 0x001D1C1D,
+    bg_lower = 0x00181718,
+    bg_bottom = 0x00131315,
 
-    tile = 0x00192B4C,
-    tile_selected = 0x00243E68,
-    tile_border = 0x00354F74,
-    tile_glow = 0x0048D9FF,
+    grid = 0x002B2C2E,
+
+    tile_selected = 0x00242424,
+    tile_glow = 0x00505052,
 
     text = 0x00D5E5F4,
     text_dim = 0x0090A9C0,
@@ -28,20 +29,32 @@ local COLOR = {
     neon = 0x0048D9FF,
     neon_dim = 0x00184B71,
 
-    tray = 0x00101D36,
-    tray_border = 0x003C5F8C,
-    tray_widget = 0x0014213B,
+    tray = 0x00141415,
+    tray_border = 0x00333335,
+    tray_widget = 0x001D1D1F,
 }
 
 -- Desktop grid. Icons begin at the upper-left corner.
 local GRID = {
-    left = 22,
-    top = 22,
-    tile_w = 96,
-    tile_h = 96,
-    gap_x = 16,
-    gap_y = 18
+    left = 12,
+    top = 16,
+    tile_w = 64,
+    tile_h = 64,
+    gap_x = 6,
+    gap_y = 6
 }
+
+local ICON_SCALE = 0.72
+
+local function sp(value)
+    return math.floor(value * ICON_SCALE + 0.5)
+end
+
+local function ss(value)
+    return math.max(1, sp(value))
+end
+
+local ICON_BOX_W = sp(44)
 
 -- Bottom tray. Future widgets are placed from right to left.
 local TRAY = {
@@ -57,7 +70,7 @@ local KEY_DOWN = 0x103
 
 local function safe_date(format, fallback)
     local ok, result = pcall(function()
-        return os.date(format)
+        return os.date(format) 
     end)
 
     if ok and type(result) == "string" and #result > 0 then
@@ -243,7 +256,6 @@ function Desktop.move_selection(dx, dy)
 
         target = target_column * rows + current_row + 1
 
-        -- The last column can be shorter than the others.
         if target > count then
             target = count
         end
@@ -255,9 +267,9 @@ end
 local function draw_background()
     local bands = {
         COLOR.bg_top,
-        0x00050E21,
+        COLOR.bg_upper,
         COLOR.bg_mid,
-        0x00091A35,
+        COLOR.bg_lower,
         COLOR.bg_bottom
     }
 
@@ -275,52 +287,117 @@ local function draw_background()
         gfx.line(0, y, screen_w, y, COLOR.grid)
     end
 
-    local title = "NeonOS"
-    local scale = 5
-    local tx = math.floor((screen_w - text_width(title, scale)) / 2)
-    local ty = math.floor(screen_h * 0.60)
+    local logo_n = "N"
+    local logo_eonos = "eonOS"
+    local title = logo_n .. logo_eonos
+    local scale = 15
 
-    gfx.text(tx + 2, ty + 2, title, 0x000A2A46, scale)
-    gfx.text(tx, ty, title, COLOR.neon_dim, scale)
+    local logo_w = text_width(title, scale)
+    local logo_h = 8 * scale
+
+    local tx = math.floor((screen_w - logo_w) / 2)
+    local ty = math.floor((screen_h - logo_h) / 2) - 8
+
+    local first_w = text_width(logo_n, scale)
+
+    gfx.text(tx + 3, ty + 4, logo_n, 0x00101012, scale)
+    gfx.text(tx + first_w + 3, ty + 4, logo_eonos, 0x00101012, scale)
+
+    gfx.text(tx, ty, logo_n, 0x00E02915, scale)
+    gfx.text(tx + first_w, ty, logo_eonos, 0x00F4F4F4, scale)
 end
 
 local function draw_folder_icon(x, y)
-    gfx.fill_rect(x + 6, y + 5, 20, 8, 0x00A97828)
-    gfx.fill_rect(x + 2, y + 13, 40, 26, 0x00F2C75C)
-    gfx.rect(x + 2, y + 13, 40, 26, 0x00A97828)
-    gfx.fill_rect(x + 6, y + 17, 32, 17, 0x00FFE39A)
+    gfx.fill_rect(x + sp(6), y + sp(5), ss(20), ss(8), 0x00A97828)
+    gfx.fill_rect(x + sp(2), y + sp(13), ss(40), ss(26), 0x00F2C75C)
+    gfx.rect(x + sp(2), y + sp(13), ss(40), ss(26), 0x00A97828)
+    gfx.fill_rect(x + sp(6), y + sp(17), ss(32), ss(17), 0x00FFE39A)
+end
+
+local function fill_circle(cx, cy, radius, color)
+    for dy = -radius, radius do
+        local dx = math.floor(math.sqrt(radius * radius - dy * dy))
+
+        gfx.fill_rect(
+            cx - dx,
+            cy + dy,
+            dx * 2 + 1,
+            1,
+            color
+        )
+    end
 end
 
 local function draw_clock_icon(x, y)
-    gfx.fill_rect(x + 12, y + 1, 16, 4, 0x00248D83)
-    gfx.fill_rect(x + 9, y + 5, 22, 4, 0x00248D83)
-    gfx.fill_rect(x + 4, y + 9, 32, 28, 0x0066E7D1)
-    gfx.rect(x + 4, y + 9, 32, 28, 0x00248D83)
-    gfx.line(x + 20, y + 14, x + 20, y + 25, 0x00248D83)
-    gfx.line(x + 20, y + 25, x + 28, y + 29, 0x00248D83)
+    local ring = 0x00E02915
+    local face = 0x00F4F4F4
+    local hand = 0x00313B40
+
+    local cx = x + sp(22)
+    local cy = y + sp(22)
+
+    local radius = math.max(1, sp(18))
+    local border = math.max(1, sp(2))
+
+    fill_circle(cx, cy, radius, ring)
+
+    fill_circle(cx, cy, radius - border, face)
+
+    local thickness = math.max(2, sp(4))
+    local up_length = sp(12)
+    local right_length = sp(12)
+
+    gfx.fill_rect(
+        cx - math.floor(thickness / 2),
+        cy - up_length,
+        thickness,
+        up_length + 1,
+        hand
+    )
+
+    gfx.fill_rect(
+        cx,
+        cy - math.floor(thickness / 2),
+        right_length + 1,
+        thickness,
+        hand
+    )
+
+    fill_circle(cx, cy, math.max(1, sp(3)), hand)
 end
 
 local function draw_notes_icon(x, y)
-    gfx.fill_rect(x + 4, y + 2, 32, 39, 0x00E6EDF4)
-    gfx.rect(x + 4, y + 2, 32, 39, 0x008DA8C0)
-    gfx.fill_rect(x + 16, y, 8, 5, 0x00FF8A5D)
+    gfx.fill_rect(x + sp(4), y + sp(2), ss(32), ss(39), 0x00E6EDF4)
+    gfx.rect(x + sp(4), y + sp(2), ss(32), ss(39), 0x008DA8C0)
+    gfx.fill_rect(x + sp(16), y, ss(8), ss(5), 0x00FF8A5D)
 
     for line = 0, 3 do
         gfx.line(
-            x + 8,
-            y + 12 + line * 6,
-            x + 30,
-            y + 12 + line * 6,
+            x + sp(8),
+            y + sp(12 + line * 6),
+            x + sp(30),
+            y + sp(12 + line * 6),
             0x0076BEE7
         )
     end
 end
 
 local function draw_app_icon(x, y)
-    gfx.fill_rect(x + 4, y + 5, 34, 28, 0x0029537A)
-    gfx.rect(x + 4, y + 5, 34, 28, COLOR.neon)
-    gfx.fill_rect(x + 9, y + 10, 24, 16, 0x000B1930)
-    gfx.fill_rect(x + 15, y + 35, 12, 3, COLOR.neon)
+    gfx.fill_rect(x + sp(4), y + sp(5), ss(34), ss(28), 0x0029537A)
+    gfx.rect(x + sp(4), y + sp(5), ss(34), ss(28), COLOR.neon)
+    gfx.fill_rect(x + sp(9), y + sp(10), ss(24), ss(16), 0x000B1930)
+    gfx.fill_rect(x + sp(15), y + sp(35), ss(12), ss(3), COLOR.neon)
+end
+
+local function draw_terminal_icon(x, y)
+    gfx.fill_rect(x + sp(4), y + sp(5), ss(34), ss(28), 0x0029537A)
+    gfx.rect(x + sp(4), y + sp(5), ss(34), ss(28), COLOR.neon)
+
+    gfx.fill_rect(x + sp(7), y + sp(7), ss(2), ss(2),  0x00A0D8FF)
+    gfx.fill_rect(x + sp(10), y + sp(7), ss(2), ss(2),  0x00A0D8FF)
+    gfx.fill_rect(x + sp(13), y + sp(7), ss(2), ss(2),  0x00A0D8FF)
+
+    gfx.fill_rect(x + sp(6),  y + sp(12), ss(30), ss(18), 0x000B1930)
 end
 
 local function draw_icon_graphic(kind, x, y)
@@ -330,6 +407,8 @@ local function draw_icon_graphic(kind, x, y)
         draw_clock_icon(x, y)
     elseif kind == "notes" then
         draw_notes_icon(x, y)
+    elseif kind == "terminal" then
+        draw_terminal_icon(x, y)
     else
         draw_app_icon(x, y)
     end
@@ -337,24 +416,17 @@ end
 
 local function draw_tile(icon, index, x, y)
     local selected = (index == Desktop.selected)
-    local fill = selected and COLOR.tile_selected or COLOR.tile
-    local border = selected and COLOR.tile_glow or COLOR.tile_border
-
-    gfx.fill_rect(x, y, GRID.tile_w, GRID.tile_h, fill)
-    gfx.rect(x, y, GRID.tile_w, GRID.tile_h, border)
 
     if selected then
+        gfx.fill_rect(x, y, GRID.tile_w, GRID.tile_h, COLOR.tile_selected)
+        gfx.rect(x, y, GRID.tile_w, GRID.tile_h, COLOR.tile_glow)
         gfx.rect(x - 2, y - 2, GRID.tile_w + 4, GRID.tile_h + 4, COLOR.tile_glow)
     end
 
-    draw_icon_graphic(
-        icon.icon_kind,
-        x + math.floor((GRID.tile_w - 44) / 2),
-        y + 18
-    )
+    draw_icon_graphic(icon.icon_kind, x + math.floor((GRID.tile_w - ICON_BOX_W) / 2), y + 8)
 
-    local title = fit_text(icon.title, GRID.tile_w - 10, 1)
-    centered_text(x, y + 78, GRID.tile_w, title, COLOR.text, 1)
+    local title = fit_text(icon.title, GRID.tile_w - 6, 1)
+    centered_text(x, y + 52, GRID.tile_w, title, COLOR.text, 1)
 end
 
 -- Icon order is top-to-bottom, then starts a new column to the right.
@@ -429,8 +501,9 @@ Desktop.add_tray_widget("clock", 148, draw_clock_tray_widget)
 
 -- Desktop icons. They fill downward before creating a new column.
 Desktop.add_icon("Explorer", "explorer", "folder")
-Desktop.add_icon("Time", "time", "clock")
 Desktop.add_icon("Notes", "notes", "notes")
+Desktop.add_icon("Time", "time", "clock")
+Desktop.add_icon("Terminal", "terminal", "terminal")
 
 while true do
     local key = input.poll()

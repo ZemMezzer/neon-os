@@ -18,3 +18,18 @@ int console_get_cursor_y(void);
 int console_get_columns(void);
 void console_set_cursor_pos(int x, int y);
 void console_clear_line_from_cursor(void);
+
+typedef void (*ConsoleOutputCallback)(
+    char character,
+    void* userdata
+);
+
+typedef struct ConsoleOutputTarget {
+    ConsoleOutputCallback callback;
+    void* userdata;
+} ConsoleOutputTarget;
+
+ConsoleOutputTarget console_set_output_callback(
+    ConsoleOutputCallback callback,
+    void* userdata
+);
