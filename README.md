@@ -4,10 +4,6 @@ A bare-metal, single-threaded operating system. Written in C and minimal assembl
 
 Boots without UEFI. No Linux. No runtime dependencies.
 
-![Explorer](screenshots/explorer.png)
-![Shell](screenshots/shell.png)
-![Notes editor](screenshots/notes.png)
-
 ---
 
 ## Features
