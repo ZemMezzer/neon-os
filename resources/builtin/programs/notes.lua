@@ -11,7 +11,7 @@
 --   Arrows                 move cursor
 --   Shift + arrows         select text
 --   Ctrl+A/C/X/V/Z         select all / copy / cut / paste / undo
---   Ctrl+O                open a file through Explorer
+--   Ctrl+O                open a file through Explorer command
 --   Ctrl+S or F2           save
 --   Ctrl+Shift+S           save as through Explorer
 --   Ctrl+Q or Escape       exit (asks when unsaved)
@@ -21,12 +21,16 @@
 --   Page Up/Down           scroll
 --   Home/End               line start/end
 --
+-- Explorer is started through shell.exec("explorer ..."), so its location
+-- is resolved from PATH.txt rather than hard-coded in Notes.
+--
 -- The clipboard is internal to Notes. NeonOS does not yet expose a system
 -- clipboard to Lua programs.
 
 local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
+local shell = require("shell")
 
 local args = { ... }
 
@@ -52,7 +56,6 @@ local COLOR_CURSOR = 0x00FFE45C
 local COLOR_BLACK = 0x00000000
 
 local DEFAULT_NOTES_DIR = "0:/notes"
-local EXPLORER_SCRIPT = "0:/system/explorer.lua"
 local PICK_RESULT_FILE = "0:/system/variables/.notes_pick.tmp"
 local MAX_UNDO = 40
 local TAB_WIDTH = 4
@@ -969,9 +972,11 @@ local function choose_in_explorer(kind, start_path)
     gfx.clear(COLOR_BG)
     gfx.present()
 
+    -- Explorer is resolved like any other NeonOS application:
+    -- first from the current folder, then through PATH.txt.
     ok, result = pcall(
-        os.execute,
-        "lua " .. shell_quote(EXPLORER_SCRIPT) ..
+        shell.exec,
+        "explorer" ..
         " " .. flag ..
         " " .. shell_quote(PICK_RESULT_FILE) ..
         " " .. shell_quote(start)
@@ -979,6 +984,12 @@ local function choose_in_explorer(kind, start_path)
 
     if not ok then
         status = "EXPLORER FAILED: " .. tostring(result)
+        needs_draw = true
+        return nil
+    end
+
+    if result ~= 0 then
+        status = "EXPLORER EXITED: " .. tostring(result)
         needs_draw = true
         return nil
     end

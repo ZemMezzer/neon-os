@@ -1,5 +1,3 @@
--- NeonOS Explorer v1
---
 -- A framebuffer file manager for NeonOS Lua.
 -- Requires the built-in modules:
 --   local gfx = require("gfx")
@@ -10,7 +8,7 @@
 --   Up/Down or W/S      move selection
 --   Home/End            first / last item
 --   [ / ]               previous / next page
---   Enter               open directory / run selected Lua file
+--   Enter               open directory / open selected file
 --   Right               open directory
 --   Backspace or Left   parent directory
 --   D or Delete         delete selected item
@@ -39,6 +37,7 @@
 local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
+local shell = require("shell")
 
 local args = { ... }
 
@@ -51,6 +50,12 @@ local COLOR = {
     muted = 0x9CB4C4,
     accent = 0x63C6FF,
     directory = 0x8DDB7A,
+    folder_icon = 0xF2C75C,
+    folder_icon_light = 0xFFE39A,
+    folder_icon_dark = 0xA97828,
+    file_icon = 0xF4F8FC,
+    file_icon_fold = 0xB8D1E5,
+    file_icon_line = 0x78AFCF,
     selected_bg = 0x285B7A,
     selected_text = 0xFFFFFF,
     warning = 0xFFD166,
@@ -190,8 +195,6 @@ local function ensure_picker_parent()
         return fs.isDir(parent)
     end
 
-    -- Only the system variables folder is normally used here. We create
-    -- missing components one at a time so FatFs does not need recursive mkdir.
     local current = "0:"
     local remainder = normalize_launch_path(parent):sub(4)
 
@@ -261,7 +264,6 @@ local function parse_picker_args()
     if flag == "--pick-folder" then
         picker_mode = "folder"
     elseif flag == "--pick-path" then
-        -- Combined mode: choose a file, or choose the current folder.
         picker_mode = "path"
     else
         picker_mode = "file"
@@ -451,83 +453,16 @@ local function open_directory(item)
     refresh("Opened " .. display_path(cwd))
 end
 
-local function is_lua_file(item)
-    if not item or item.parent or item.isDir then
-        return false
-    end
-
-    local name = string.lower(tostring(item.name or ""))
-
-    return #name >= 4 and name:sub(-4) == ".lua"
-end
-
-local function is_text_file(item)
-    local name
-    local extension
-
-    if not item or item.parent or item.isDir then
-        return false
-    end
-
-    name = string.lower(tostring(item.name or ""))
-    extension = name:match("(%.[^./]+)$") or ""
-
-    return extension == ".txt" or
-           extension == ".md" or
-           extension == ".log" or
-           extension == ".cfg" or
-           extension == ".ini" or
-           extension == ".json" or
-           extension == ".csv" or
-           extension == ".c" or
-           extension == ".h" or
-           extension == ".lua"
-end
-
 local function shell_quote(value)
     return '"' .. tostring(value or ""):gsub('"', "") .. '"'
 end
 
-local function run_lua_file(item)
-    if not is_lua_file(item) then
-        set_status("Not a Lua file: " .. tostring(item and item.name or ""))
-        return
-    end
-
-    local command = "lua " .. shell_quote(item.path)
+local function open_file_with_association(item)
     local ok
     local result
-    local reason
-    local code
 
-    set_status("Launching " .. item.name)
-
-    gfx.clear(COLOR.black)
-    gfx.present()
-
-    ok, result, reason, code = pcall(os.execute, command)
-
-    if not ok then
-        refresh("Lua launch failed: " .. tostring(result))
-        return
-    end
-
-    if result == true or result == 0 or code == 0 then
-        refresh("Returned from " .. item.name)
-    else
-        local exit_status = code
-
-        if exit_status == nil then
-            exit_status = result
-        end
-
-        refresh("Lua exited with " .. tostring(exit_status))
-    end
-end
-
-local function open_in_notes(item)
-    if not is_text_file(item) then
-        set_status("Not a text file: " .. tostring(item and item.name or ""))
+    if not item or item.parent or item.isDir then
+        set_status("Not a file: " .. tostring(item and item.name or ""))
         return
     end
 
@@ -536,18 +471,23 @@ local function open_in_notes(item)
     gfx.clear(COLOR.black)
     gfx.present()
 
-    local ok, result = pcall(
-        os.execute,
-        "notes " .. shell_quote(item.path)
+    ok, result = pcall(
+        shell.exec,
+        "open " .. shell_quote(item.path)
     )
 
     if not ok then
-        refresh("Notes launch failed: " .. tostring(result))
+        refresh("Open failed: " .. tostring(result))
         return
     end
 
-    refresh("Returned from Notes")
+    if result == 0 then
+        refresh("Returned from " .. item.name)
+    else
+        refresh("Cannot open " .. item.name .. " (status " .. tostring(result) .. ")")
+    end
 end
+
 
 local function open_selected_item()
     local item = selected_item()
@@ -574,12 +514,8 @@ local function open_selected_item()
         open_directory(item)
     elseif picker_mode == "file" or picker_mode == "path" then
         finish_picker(item.path)
-    elseif is_lua_file(item) then
-        run_lua_file(item)
-    elseif is_text_file(item) then
-        open_in_notes(item)
     else
-        set_status("Unsupported file: " .. item.name)
+        open_file_with_association(item)
     end
 end
 
@@ -599,40 +535,75 @@ local function draw_line(x, y, width, color)
     gfx.fill_rect(x, y, width, 1, color)
 end
 
+local function draw_folder_row_icon(x, y, selected)
+    local main = selected and COLOR.selected_text or COLOR.folder_icon
+    local light = selected and 0xFFFFFF or COLOR.folder_icon_light
+    local dark = selected and COLOR.accent or COLOR.folder_icon_dark
+
+    gfx.fill_rect(x + 3, y + 3, 8, 3, dark)
+    gfx.fill_rect(x + 1, y + 6, 14, 10, main)
+    gfx.rect(x + 1, y + 6, 14, 10, dark)
+    gfx.fill_rect(x + 3, y + 9, 10, 5, light)
+end
+
+local function draw_file_row_icon(x, y, selected)
+    local paper = selected and COLOR.selected_text or COLOR.file_icon
+    local fold = selected and COLOR.accent or COLOR.file_icon_fold
+    local line = selected and COLOR.accent or COLOR.file_icon_line
+
+    gfx.fill_rect(x + 3, y + 1, 10, 15, paper)
+    gfx.rect(x + 3, y + 1, 10, 15, line)
+
+    -- Folded top-right page corner.
+    gfx.fill_rect(x + 10, y + 2, 2, 3, fold)
+    gfx.line(x + 5, y + 8, x + 11, y + 8, line)
+    gfx.line(x + 5, y + 11, x + 11, y + 11, line)
+end
+
 local function draw_item_row(item, index, y)
     local is_selected = index == selected
     local foreground = COLOR.text
-    local prefix = "    "
     local suffix = ""
+    local icon_x = PADDING + 4
+    local text_x = icon_x + 21
 
     if is_selected then
-        gfx.fill_rect(PADDING, y - 1, SCREEN_WIDTH - PADDING * 2, ROW_HEIGHT, COLOR.selected_bg)
+        gfx.fill_rect(
+            PADDING,
+            y - 1,
+            SCREEN_WIDTH - PADDING * 2,
+            ROW_HEIGHT,
+            COLOR.selected_bg
+        )
         foreground = COLOR.selected_text
     end
 
-    if item.parent then
-        prefix = "<UP> "
-        foreground = is_selected and COLOR.selected_text or COLOR.muted
-    elseif item.isDir then
-        prefix = "[D]  "
-        suffix = "/"
-        foreground = is_selected and COLOR.selected_text or COLOR.directory
+    if item.isDir then
+        if item.parent then
+            foreground = is_selected and COLOR.selected_text or COLOR.muted
+        else
+            foreground = is_selected and COLOR.selected_text or COLOR.directory
+            suffix = "/"
+        end
+
+        draw_folder_row_icon(icon_x, y, is_selected)
     else
         suffix = "  " .. format_size(item.size)
+        draw_file_row_icon(icon_x, y, is_selected)
     end
 
-    local available_chars = math.floor((SCREEN_WIDTH - PADDING * 2) / CHAR_WIDTH)
-    local left_text = prefix .. item.name
-    local suffix_chars = #suffix
-    local name_chars = math.max(1, available_chars - suffix_chars)
+    local suffix_width = #suffix * CHAR_WIDTH
+    local available_pixels = SCREEN_WIDTH - PADDING - text_x - suffix_width
+    local name_chars = math.max(1, math.floor(available_pixels / CHAR_WIDTH))
 
-    text_at(PADDING + 4, y, left_text, foreground, name_chars)
+    text_at(text_x, y, item.name, foreground, name_chars)
 
     if suffix ~= "" then
-        local suffix_x = SCREEN_WIDTH - PADDING - #suffix * CHAR_WIDTH
+        local suffix_x = SCREEN_WIDTH - PADDING - suffix_width
         text_at(suffix_x, y, suffix, foreground)
     end
 end
+
 
 local function draw_modal()
     if not modal then
@@ -731,8 +702,8 @@ local function draw_ui()
         text_at(PADDING, SCREEN_HEIGHT - 42, "Backspace/Left: parent   Tab: cancel", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "Source: " .. target_mode.source.name, COLOR.warning, footer_chars)
     else
-        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter open/run/edit  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 42, "E edit text  D delete  N mkdir  R rename  C copy  M move", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/E open  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "D delete  N mkdir  R rename  C copy  M move", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "F refresh  I info  [/] page  Home/End bounds  Q quit", COLOR.muted, footer_chars)
     end
 
@@ -1213,7 +1184,7 @@ local function handle_browse_key(key)
     end
 
     if shortcut == input.E then
-        open_in_notes(selected_item())
+        open_selected_item()
         return
     end
 

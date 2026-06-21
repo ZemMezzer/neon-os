@@ -16,6 +16,10 @@
 #define SHELL_PATH_FILE "0:/system/variables/PATH.txt"
 #define SHELL_PATH_MAX_ENTRIES 16
 
+#define SHELL_ALIAS_FILE "0:/system/variables/ALIAS.txt"
+#define SHELL_ALIAS_TEMP_FILE "0:/system/variables/ALIAS.tmp"
+#define SHELL_ALIAS_EXTENSION_MAX 64
+
 #define SHELL_SCRIPT_MAX_DEPTH 8
 
 typedef struct ShellCommand {
@@ -573,6 +577,555 @@ static int shell_load_path_list(ShellPathList* list) {
     return fclose(file) == EOF ? -1 : 0;
 }
 
+static char shell_ascii_to_lower(char character) {
+    if (character >= 'A' && character <= 'Z') {
+        return (char)(character - 'A' + 'a');
+    }
+
+    return character;
+}
+
+static int shell_get_file_extension(
+    const char* path,
+    char* output,
+    int output_size
+) {
+    int last_separator = -1;
+    int last_dot = -1;
+    int index;
+    int output_index = 0;
+
+    if (
+        path == NULL ||
+        path[0] == 0 ||
+        output == NULL ||
+        output_size <= 1
+    ) {
+        return -1;
+    }
+
+    output[0] = 0;
+
+    for (index = 0; path[index] != 0; index++) {
+        if (path[index] == '/' || path[index] == '\\') {
+            last_separator = index;
+            last_dot = -1;
+        } else if (path[index] == '.') {
+            last_dot = index;
+        }
+    }
+
+    if (
+        last_dot < 0 ||
+        last_dot <= last_separator + 1 ||
+        path[last_dot + 1] == 0
+    ) {
+        return 0;
+    }
+
+    for (index = last_dot + 1; path[index] != 0; index++) {
+        if (output_index + 1 >= output_size) {
+            output[0] = 0;
+            return -1;
+        }
+
+        output[output_index] = shell_ascii_to_lower(path[index]);
+        output_index++;
+    }
+
+    output[output_index] = 0;
+    return 1;
+}
+
+static int shell_normalize_alias_extension(char* extension) {
+    int index;
+    int write_index;
+
+    if (extension == NULL) {
+        return -1;
+    }
+
+    shell_trim_path_line(extension);
+
+    if (extension[0] == '.') {
+        write_index = 0;
+
+        for (index = 1; extension[index] != 0; index++) {
+            extension[write_index] = extension[index];
+            write_index++;
+        }
+
+        extension[write_index] = 0;
+    }
+
+    if (extension[0] == 0) {
+        return -1;
+    }
+
+    for (index = 0; extension[index] != 0; index++) {
+        char character = extension[index];
+
+        if (
+            character == '/' ||
+            character == '\\' ||
+            character == ':' ||
+            character == '=' ||
+            character == '"' ||
+            character == ' ' ||
+            character == '\t'
+        ) {
+            return -1;
+        }
+
+        extension[index] = shell_ascii_to_lower(character);
+    }
+
+    return 0;
+}
+
+static int shell_alias_application_is_valid(const char* application) {
+    int index;
+
+    if (application == NULL || application[0] == 0) {
+        return 0;
+    }
+
+    for (index = 0; application[index] != 0; index++) {
+        if (
+            application[index] == ' ' ||
+            application[index] == '\t' ||
+            application[index] == '\r' ||
+            application[index] == '\n' ||
+            application[index] == '"'
+        ) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int shell_lookup_alias_application(
+    const char* extension,
+    char* output,
+    int output_size
+) {
+    FILE* file;
+    FILINFO info;
+    FRESULT stat_result;
+    char line[SHELL_LINE_MAX];
+
+    if (
+        extension == NULL ||
+        extension[0] == 0 ||
+        output == NULL ||
+        output_size <= 0
+    ) {
+        return -1;
+    }
+
+    output[0] = 0;
+
+    stat_result = f_stat(SHELL_ALIAS_FILE, &info);
+
+    if (stat_result == FR_NO_FILE || stat_result == FR_NO_PATH) {
+        return -2;
+    }
+
+    if (stat_result != FR_OK || (info.fattrib & AM_DIR) != 0) {
+        return -1;
+    }
+
+    file = fopen(SHELL_ALIAS_FILE, "r");
+
+    if (file == NULL) {
+        return -1;
+    }
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        int equal_index = -1;
+        int index;
+        char* alias_extension;
+        char* application;
+
+        shell_trim_path_line(line);
+
+        if (line[0] == 0 || line[0] == '#') {
+            continue;
+        }
+
+        for (index = 0; line[index] != 0; index++) {
+            if (line[index] == '=') {
+                equal_index = index;
+                break;
+            }
+        }
+
+        if (equal_index < 0) {
+            continue;
+        }
+
+        line[equal_index] = 0;
+        alias_extension = line;
+        application = line + equal_index + 1;
+
+        if (shell_normalize_alias_extension(alias_extension) != 0) {
+            continue;
+        }
+
+        shell_trim_path_line(application);
+
+        if (!shell_alias_application_is_valid(application)) {
+            continue;
+        }
+
+        if (shell_str_equal(alias_extension, extension)) {
+            shell_copy(output, output_size, application);
+
+            if (fclose(file) == EOF) {
+                output[0] = 0;
+                return -1;
+            }
+
+            return 1;
+        }
+    }
+
+    if (fclose(file) == EOF) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int shell_build_open_command(
+    const char* application,
+    const char* path,
+    char* output,
+    int output_size
+) {
+    int position = 0;
+    int index;
+
+    if (
+        !shell_alias_application_is_valid(application) ||
+        path == NULL ||
+        path[0] == 0 ||
+        output == NULL ||
+        output_size <= 0
+    ) {
+        return -1;
+    }
+
+    for (index = 0; path[index] != 0; index++) {
+        if (path[index] == '"') {
+            return -1;
+        }
+    }
+
+    output[0] = 0;
+
+    if (
+        shell_append_text(output, output_size, &position, application) != 0 ||
+        shell_append_char(output, output_size, &position, ' ') != 0 ||
+        shell_append_char(output, output_size, &position, '"') != 0 ||
+        shell_append_text(output, output_size, &position, path) != 0 ||
+        shell_append_char(output, output_size, &position, '"') != 0
+    ) {
+        output[0] = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int shell_parse_alias_line_extension(
+    char* line,
+    char* output,
+    int output_size
+) {
+    int equal_index = -1;
+    int index;
+    char* extension;
+    char* application;
+
+    if (
+        line == NULL ||
+        output == NULL ||
+        output_size <= 1
+    ) {
+        return -1;
+    }
+
+    output[0] = 0;
+
+    shell_trim_path_line(line);
+
+    if (line[0] == 0 || line[0] == '#') {
+        return 0;
+    }
+
+    for (index = 0; line[index] != 0; index++) {
+        if (line[index] == '=') {
+            equal_index = index;
+            break;
+        }
+    }
+
+    if (equal_index < 0) {
+        return 0;
+    }
+
+    line[equal_index] = 0;
+    extension = line;
+    application = line + equal_index + 1;
+
+    if (shell_normalize_alias_extension(extension) != 0) {
+        return 0;
+    }
+
+    shell_trim_path_line(application);
+
+    if (!shell_alias_application_is_valid(application)) {
+        return 0;
+    }
+
+    if (shell_str_len(extension) >= output_size) {
+        return -1;
+    }
+
+    shell_copy(output, output_size, extension);
+    return 1;
+}
+
+static int shell_write_raw_alias_line(
+    FILE* file,
+    const char* line
+) {
+    int length;
+
+    if (file == NULL || line == NULL) {
+        return -1;
+    }
+
+    if (fputs(line, file) == EOF) {
+        return -1;
+    }
+
+    length = shell_str_len(line);
+
+    if (length == 0 || line[length - 1] != '\n') {
+        if (fputc('\n', file) == EOF) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int shell_write_alias_mapping(
+    FILE* file,
+    const char* extension,
+    const char* application
+) {
+    if (
+        file == NULL ||
+        extension == NULL ||
+        application == NULL
+    ) {
+        return -1;
+    }
+
+    if (
+        fputs(extension, file) == EOF ||
+        fputc('=', file) == EOF ||
+        fputs(application, file) == EOF ||
+        fputc('\n', file) == EOF
+    ) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int shell_update_alias_file(
+    const char* extension,
+    const char* application,
+    int remove_only,
+    int* out_found,
+    int* out_file_existed
+) {
+    FILE* source = NULL;
+    FILE* temporary = NULL;
+    FILINFO info;
+    FRESULT stat_result;
+    FRESULT result;
+    char raw_line[SHELL_LINE_MAX];
+    char parsed_line[SHELL_LINE_MAX];
+    char parsed_extension[SHELL_ALIAS_EXTENSION_MAX];
+    int found = 0;
+    int mapping_written = 0;
+    int file_existed = 0;
+    int failed = 0;
+
+    if (
+        extension == NULL ||
+        extension[0] == 0 ||
+        (!remove_only && !shell_alias_application_is_valid(application))
+    ) {
+        return -1;
+    }
+
+    if (out_found != NULL) {
+        *out_found = 0;
+    }
+
+    if (out_file_existed != NULL) {
+        *out_file_existed = 0;
+    }
+
+    stat_result = f_stat(SHELL_ALIAS_FILE, &info);
+
+    if (stat_result == FR_OK) {
+        if ((info.fattrib & AM_DIR) != 0) {
+            return -1;
+        }
+
+        source = fopen(SHELL_ALIAS_FILE, "r");
+
+        if (source == NULL) {
+            return -1;
+        }
+
+        file_existed = 1;
+    } else if (
+        stat_result != FR_NO_FILE &&
+        stat_result != FR_NO_PATH
+    ) {
+        return -1;
+    }
+
+    if (out_file_existed != NULL) {
+        *out_file_existed = file_existed;
+    }
+
+    if (remove_only && !file_existed) {
+        return 0;
+    }
+
+    result = f_unlink(SHELL_ALIAS_TEMP_FILE);
+
+    if (
+        result != FR_OK &&
+        result != FR_NO_FILE &&
+        result != FR_NO_PATH
+    ) {
+        if (source != NULL) {
+            (void)fclose(source);
+        }
+
+        return -1;
+    }
+
+    temporary = fopen(SHELL_ALIAS_TEMP_FILE, "w");
+
+    if (temporary == NULL) {
+        if (source != NULL) {
+            (void)fclose(source);
+        }
+
+        return -1;
+    }
+
+    while (source != NULL && fgets(raw_line, sizeof(raw_line), source) != NULL) {
+        int parse_result;
+
+        shell_copy(parsed_line, sizeof(parsed_line), raw_line);
+
+        parse_result = shell_parse_alias_line_extension(
+            parsed_line,
+            parsed_extension,
+            sizeof(parsed_extension)
+        );
+
+        if (
+            parse_result == 1 &&
+            shell_str_equal(parsed_extension, extension)
+        ) {
+            found = 1;
+
+            if (!remove_only && !mapping_written) {
+                if (
+                    shell_write_alias_mapping(
+                        temporary,
+                        extension,
+                        application
+                    ) != 0
+                ) {
+                    failed = 1;
+                    break;
+                }
+
+                mapping_written = 1;
+            }
+
+            continue;
+        }
+
+        if (shell_write_raw_alias_line(temporary, raw_line) != 0) {
+            failed = 1;
+            break;
+        }
+    }
+
+    if (!failed && !remove_only && !mapping_written) {
+        if (
+            shell_write_alias_mapping(
+                temporary,
+                extension,
+                application
+            ) != 0
+        ) {
+            failed = 1;
+        }
+    }
+
+    if (source != NULL && fclose(source) == EOF) {
+        failed = 1;
+    }
+
+    if (fclose(temporary) == EOF) {
+        failed = 1;
+    }
+
+    if (failed) {
+        (void)f_unlink(SHELL_ALIAS_TEMP_FILE);
+        return -1;
+    }
+
+    if (file_existed) {
+        result = f_unlink(SHELL_ALIAS_FILE);
+
+        if (result != FR_OK) {
+            (void)f_unlink(SHELL_ALIAS_TEMP_FILE);
+            return -1;
+        }
+    }
+
+    result = f_rename(SHELL_ALIAS_TEMP_FILE, SHELL_ALIAS_FILE);
+
+    if (result != FR_OK) {
+        (void)f_unlink(SHELL_ALIAS_TEMP_FILE);
+        return -1;
+    }
+
+    if (out_found != NULL) {
+        *out_found = found;
+    }
+
+    return 0;
+}
+
 static int shell_write_path_list(const ShellPathList* list) {
     FILE* file;
 
@@ -805,6 +1358,8 @@ static int cmd_rm(int argc, char** argv);
 static int cmd_mv(int argc, char** argv);
 static int cmd_echo(int argc, char** argv);
 static int cmd_path(int argc, char** argv);
+static int cmd_alias(int argc, char** argv);
+static int cmd_open(int argc, char** argv);
 static int cmd_sh(int argc, char** argv);
 
 int shell_register_command(
@@ -1261,6 +1816,203 @@ static int cmd_path(int argc, char** argv) {
     return -1;
 }
 
+static int cmd_alias(int argc, char** argv) {
+    char extension[SHELL_ALIAS_EXTENSION_MAX];
+    int found;
+    int file_existed;
+
+    if (argc < 2) {
+        shell_print_error(
+            "usage: alias add <extension> <application> | alias remove <extension>"
+        );
+        return -1;
+    }
+
+    if (shell_str_equal(argv[1], "add")) {
+        int result;
+
+        if (argc != 4) {
+            shell_print_error("usage: alias add <extension> <application>");
+            return -1;
+        }
+
+        if (shell_str_len(argv[2]) >= (int)sizeof(extension)) {
+            shell_print_error("extension is too long");
+            return -1;
+        }
+
+        shell_copy(extension, sizeof(extension), argv[2]);
+
+        if (shell_normalize_alias_extension(extension) != 0) {
+            shell_print_error("invalid extension");
+            return -1;
+        }
+
+        if (!shell_alias_application_is_valid(argv[3])) {
+            shell_print_error("application must be one command name");
+            return -1;
+        }
+
+        result = shell_update_alias_file(
+            extension,
+            argv[3],
+            0,
+            &found,
+            &file_existed
+        );
+
+        if (result != 0) {
+            shell_print_error("cannot write " SHELL_ALIAS_FILE);
+            return -1;
+        }
+
+        console_write("alias: ");
+        console_write(found ? "updated ." : "added .");
+        console_write(extension);
+        console_write(" -> ");
+        console_write(argv[3]);
+        console_write("\n");
+
+        return 0;
+    }
+
+    if (shell_str_equal(argv[1], "remove")) {
+        int result;
+
+        if (argc != 3) {
+            shell_print_error("usage: alias remove <extension>");
+            return -1;
+        }
+
+        if (shell_str_len(argv[2]) >= (int)sizeof(extension)) {
+            shell_print_error("extension is too long");
+            return -1;
+        }
+
+        shell_copy(extension, sizeof(extension), argv[2]);
+
+        if (shell_normalize_alias_extension(extension) != 0) {
+            shell_print_error("invalid extension");
+            return -1;
+        }
+
+        result = shell_update_alias_file(
+            extension,
+            NULL,
+            1,
+            &found,
+            &file_existed
+        );
+
+        if (result != 0) {
+            shell_print_error("cannot write " SHELL_ALIAS_FILE);
+            return -1;
+        }
+
+        if (!file_existed) {
+            shell_print_error("ALIAS.txt not found");
+            return -1;
+        }
+
+        if (!found) {
+            console_write("alias: no association for .");
+            console_write(extension);
+            console_write("\n");
+            return -1;
+        }
+
+        console_write("alias: removed .");
+        console_write(extension);
+        console_write("\n");
+
+        return 0;
+    }
+
+    shell_print_error(
+        "usage: alias add <extension> <application> | alias remove <extension>"
+    );
+    return -1;
+}
+
+static int cmd_open(int argc, char** argv) {
+    char path[SHELL_PATH_MAX];
+    char extension[SHELL_ALIAS_EXTENSION_MAX];
+    char application[SHELL_PATH_MAX];
+    char command[SHELL_LINE_MAX];
+    int extension_result;
+    int alias_result;
+
+    if (argc != 2) {
+        shell_print_error("usage: open <file>");
+        return -1;
+    }
+
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+        shell_print_error("path too long");
+        return -1;
+    }
+
+    if (!shell_regular_file_exists(path)) {
+        shell_print_error("file not found");
+        return -1;
+    }
+
+    extension_result = shell_get_file_extension(
+        path,
+        extension,
+        sizeof(extension)
+    );
+
+    if (extension_result < 0) {
+        shell_print_error("file extension is too long");
+        return -1;
+    }
+
+    if (extension_result == 0) {
+        shell_print_error("file has no extension");
+        return -1;
+    }
+
+    alias_result = shell_lookup_alias_application(
+        extension,
+        application,
+        sizeof(application)
+    );
+
+    if (alias_result == -2) {
+        shell_print_error(
+            "no file associations configured (ALIAS.txt not found)"
+        );
+        return -1;
+    }
+
+    if (alias_result < 0) {
+        shell_print_error("cannot read " SHELL_ALIAS_FILE);
+        return -1;
+    }
+
+    if (alias_result == 0) {
+        console_write("Error: no application associated with .");
+        console_write(extension);
+        console_write("\n");
+        return -1;
+    }
+
+    if (
+        shell_build_open_command(
+            application,
+            path,
+            command,
+            sizeof(command)
+        ) != 0
+    ) {
+        shell_print_error("cannot build application command");
+        return -1;
+    }
+
+    return shell_commands_execute(command);
+}
+
 static void shell_trim_script_line(char* text) {
     int start = 0;
     int end;
@@ -1408,5 +2160,7 @@ void shell_commands_init(void) {
     (void)shell_register_command("mv", "rename or move", cmd_mv);
     (void)shell_register_command("echo", "print text", cmd_echo);
     (void)shell_register_command("path", "show or edit command PATH", cmd_path);
+    (void)shell_register_command("alias", "add or remove file associations", cmd_alias);
+    (void)shell_register_command("open", "open file with ALIAS.txt association", cmd_open);
     (void)shell_register_command("sh", "run a shell script", cmd_sh);
 }
