@@ -43,7 +43,7 @@ Boots without UEFI. No Linux. No runtime dependencies.
 
 ## Lua API
 
-NeonOS exposes three native modules to Lua programs.
+NeonOS exposes four native modules to Lua programs.
 
 ### `gfx` — Graphics
 
@@ -101,8 +101,19 @@ Input is frame-locked: one event is consumed per `gfx.present()` call.
 ### `shell` — Shell
 
 ```lua
-shell.exec(command)        -- execute a shell command string, returns exit status
-shell.run_script(path)     -- run a shell script file, returns exit status
+shell.exec(command)                -- execute a shell command string, returns exit status
+shell.exec_capture(command)        -- execute a shell command string, returns exit status, output
+shell.run_script(path)             -- run a shell script file, returns exit status
+shell.run_script_capture(path)     -- run a shell script file, returns exit status, output
+```
+
+`exec_capture` and `run_script_capture` redirect all console output into a string instead of printing it. Output is capped at 16 KB; if truncated, a `[output truncated]` marker is appended.
+
+```lua
+local status, output = shell.exec_capture("ls /")
+if status == 0 then
+    -- output contains the directory listing as a string
+end
 ```
 
 ### `fs` — Filesystem
