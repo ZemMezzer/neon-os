@@ -1,3 +1,5 @@
+![Preview](.github/preview.png)
+
 # NeonOS
 
 A bare-metal, single-threaded operating system. Written in C and minimal assembly. Lua is the primary programming language exposed to the user.
