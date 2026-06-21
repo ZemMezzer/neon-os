@@ -2,6 +2,7 @@
 
 #include "input.h"
 #include "uart.h"
+#include "arch.h"
 #include "virtio_mmio.h"
 
 #define KEY_ESC        1
@@ -226,8 +227,8 @@ static void mmio_write32(uintptr_t addr, uint32_t value) {
 }
 
 static void memory_barrier(void) {
-    asm volatile("dsb sy" ::: "memory");
-    asm volatile("isb" ::: "memory");
+    arch_data_sync_barrier();
+    arch_instruction_sync_barrier();
 }
 
 static volatile VirtqDesc* virtq_desc(void) {

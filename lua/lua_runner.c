@@ -11,6 +11,7 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+#include "arch.h"
 
 #if GFX_ENABLED
 #include "lua_gfx.h"
@@ -156,7 +157,7 @@ static void lua_program_exit_handler(
 
     if (session == NULL || session->state == NULL) {
         for (;;) {
-            asm volatile("wfe");
+            arch_wait_for_event();
         }
     }
 
@@ -164,7 +165,7 @@ static void lua_program_exit_handler(
     (void)lua_error(session->state);
 
     for (;;) {
-        asm volatile("wfe");
+        arch_wait_for_event();
     }
 }
 

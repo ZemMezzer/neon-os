@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "fw_cfg.h"
+#include "arch.h"
 
 #define FW_CFG_BASE 0x09020000UL
 
@@ -39,8 +40,8 @@ static uint64_t be64(uint64_t x) {
 }
 
 static void memory_barrier(void) {
-    asm volatile("dsb sy" ::: "memory");
-    asm volatile("isb" ::: "memory");
+    arch_data_sync_barrier();
+    arch_instruction_sync_barrier();
 }
 
 static void mmio_write16(uint64_t addr, uint16_t value) {

@@ -2,6 +2,7 @@
 
 #include "console.h"
 #include "stdlib.h"
+#include "arch.h"
 
 static ProgramContext* active_program = NULL;
 static ProgramCommandExecutor command_executor = NULL;
@@ -81,7 +82,7 @@ void program_exit(int status) {
         console_write("fatal: exit() outside a program\n");
 
         for (;;) {
-            asm volatile("wfe");
+            arch_wait_for_event();
         }
     }
 
@@ -91,7 +92,7 @@ void program_exit(int status) {
     context->exit_handler(context, context->exit_status);
 
     for (;;) {
-        asm volatile("wfe");
+        arch_wait_for_event();
     }
 }
 

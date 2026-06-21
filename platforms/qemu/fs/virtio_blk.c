@@ -2,6 +2,7 @@
 #include <stddef.h>
 
 #include "virtio_blk.h"
+#include "arch.h"
 
 #define VIRTIO_MMIO_BASE_START  0x0A000000UL
 #define VIRTIO_MMIO_DEVICE_SIZE 0x00000200UL
@@ -115,8 +116,8 @@ static volatile uint8_t virtio_blk_status
     __attribute__((aligned(16)));
 
 static inline void memory_barrier(void) {
-    asm volatile("dsb sy" ::: "memory");
-    asm volatile("isb" ::: "memory");
+    arch_data_sync_barrier();
+    arch_instruction_sync_barrier();
 }
 
 static uint32_t align_up_u32(uint32_t value, uint32_t align) {

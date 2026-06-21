@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "time.h"
+#include "arch.h"
 
 #define SECONDS_PER_DAY 86400LL
 
@@ -15,26 +16,12 @@ static struct tm neon_tm_storage;
 
 
 static uint64_t neon_timer_read_counter(void) {
-#if defined(__aarch64__)
-    uint64_t value;
-
-    asm volatile("mrs %0, cntpct_el0" : "=r"(value));
-    return value;
-#else
-    return 0;
-#endif
+    return arch_read_counter();
 }
 
 
 static uint64_t neon_timer_read_frequency(void) {
-#if defined(__aarch64__)
-    uint64_t value;
-
-    asm volatile("mrs %0, cntfrq_el0" : "=r"(value));
-    return value;
-#else
-    return 0;
-#endif
+    return arch_get_counter_frequency();
 }
 
 

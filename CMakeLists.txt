@@ -4,6 +4,7 @@ project(NeonOS C ASM)
 
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
 set(PLATFORM "" CACHE STRING "Target platform")
+set(ARCH "" CACHE STRING "Target arch")
 
 option(LUA_ENABLED "Lua" ON)
 option(GFX_ENABLED "Lua" ON)
@@ -35,40 +36,19 @@ target_compile_options(third_party PRIVATE
     -nostartfiles
 )
 
+add_subdirectory(arch)
 add_subdirectory(kernel)
-
-if(PLATFORM STREQUAL "qemu")
-    add_subdirectory(platforms/qemu)
-else()
-    message(FATAL_ERROR "Unknown PLATFORM: ${PLATFORM}")
-endif()
+add_subdirectory(platforms)
 
 if(LUA_ENABLED)
-    target_compile_definitions(objects PRIVATE
-        LUA_ENABLED=1
-    )
     add_subdirectory(lua)
 endif()
 
 if(BUILTIN_RESOURCES_ENABLED)
-    target_compile_definitions(objects PRIVATE
-        BUILTIN_RESOURCES_ENABLED=1
-    )
     add_subdirectory(resources)
 endif()
 
-if(GFX_ENABLED)
-    target_compile_definitions(objects PRIVATE
-        GFX_ENABLED=1
-    )
-
-    target_compile_definitions(third_party PRIVATE
-        GFX_ENABLED=1
-    )
-endif()
-
 add_executable(${PROJECT_NAME}
-    boot.S
     $<TARGET_OBJECTS:third_party>
     $<TARGET_OBJECTS:objects>
 )

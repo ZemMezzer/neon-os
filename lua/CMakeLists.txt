@@ -1,3 +1,7 @@
+target_compile_definitions(objects PRIVATE
+    LUA_ENABLED=1
+)
+
 target_sources(third_party PRIVATE
     # Lua core
     src/lapi.c

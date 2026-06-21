@@ -1,5 +1,7 @@
 target_sources(objects PRIVATE
     uart.c
+
+    Boot.S
 )
 
 if(GFX_ENABLED)

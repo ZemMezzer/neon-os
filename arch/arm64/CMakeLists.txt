@@ -1,16 +1,6 @@
 target_sources(objects PRIVATE
-    string.c
-    memory.c
-    stdio.c
-    stdlib.c
-    ctype.c
-    format.c
-    errno.c
-    strtol.c
-    strtod.c
-    locale.c
-    math.c
-    time.c
+    arch.c
+    setjmp.S
 )
 
 target_include_directories(third_party PUBLIC

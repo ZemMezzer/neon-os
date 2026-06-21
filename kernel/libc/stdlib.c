@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "stdlib.h"
+#include "arch.h"
 
 #define HEAP_ALIGNMENT 16U
 #define HEAP_BLOCK_MAGIC 0x4E484550U
@@ -523,7 +524,7 @@ size_t heap_free_bytes(void) {
 
 void abort(void) {
     while (1) {
-        asm volatile("wfe");
+        arch_wait_for_event();
     }
 }
 

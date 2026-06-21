@@ -1,3 +1,7 @@
+target_compile_definitions(objects PRIVATE
+    BUILTIN_RESOURCES_ENABLED=1
+)
+
 set(NEON_BUILTIN_FILES_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/builtin"
 )

@@ -2,6 +2,7 @@
 
 #include "framebuffer.h"
 #include "fw_cfg.h"
+#include "arch.h"
 
 #define DRM_FORMAT_XRGB8888 0x34325258U
 
@@ -43,8 +44,8 @@ static uint32_t be32(uint32_t x) {
 }
 
 static void memory_barrier(void) {
-    asm volatile("dsb sy" ::: "memory");
-    asm volatile("isb" ::: "memory");
+    arch_data_sync_barrier();
+    arch_instruction_sync_barrier();
 }
 
 static void ramfb_build_config(void) {

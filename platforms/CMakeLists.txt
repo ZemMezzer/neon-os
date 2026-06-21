@@ -1,0 +1,5 @@
+if(PLATFORM STREQUAL "qemu")
+    add_subdirectory(qemu)
+else()
+    message(FATAL_ERROR "Unknown PLATFORM: ${PLATFORM}")
+endif()

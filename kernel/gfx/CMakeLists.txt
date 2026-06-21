@@ -1,3 +1,13 @@
+if(GFX_ENABLED)
+    target_compile_definitions(objects PRIVATE
+        GFX_ENABLED=1
+    )
+
+    target_compile_definitions(third_party PRIVATE
+        GFX_ENABLED=1
+    )
+endif()
+
 target_sources(objects PRIVATE
     gfx.c
     font.c

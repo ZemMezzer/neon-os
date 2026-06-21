@@ -6,6 +6,7 @@
 #include "input.h"
 #include "stdio.h"
 #include "shell.h"
+#include "arch.h"
 
 #if LUA_ENABLED
 #include "lua_shell.h"
@@ -17,7 +18,7 @@
 
 static void halt(void) {
     while (1) {
-        asm volatile("wfe");
+        arch_wait_for_event();
     }
 }
 
