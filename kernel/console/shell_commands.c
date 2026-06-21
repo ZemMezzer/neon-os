@@ -288,6 +288,48 @@ int shell_resolve_path(const char* input, char* out, int out_size) {
     return shell_normalize_absolute_path(raw, out, out_size);
 }
 
+int shell_get_current_directory(
+    char* output,
+    int output_size
+) {
+    if (output == NULL || output_size <= 0) {
+        return -1;
+    }
+
+    if (shell_str_len(shell_cwd) >= output_size) {
+        output[0] = 0;
+        return -1;
+    }
+
+    shell_copy(output, output_size, shell_cwd);
+    return 0;
+}
+
+int shell_set_current_directory(const char* input) {
+    char path[SHELL_PATH_MAX];
+    DIR directory;
+    FRESULT result;
+
+    if (input == NULL || input[0] == 0) {
+        return -1;
+    }
+
+    if (shell_resolve_path(input, path, sizeof(path)) != 0) {
+        return -1;
+    }
+
+    result = f_opendir(&directory, path);
+
+    if (result != FR_OK) {
+        return -1;
+    }
+
+    f_closedir(&directory);
+
+    shell_copy(shell_cwd, sizeof(shell_cwd), path);
+    return 0;
+}
+
 static int shell_path_entry_to_absolute(
     const char* entry,
     char* output,
@@ -1255,7 +1297,7 @@ static void shell_trim_script_line(char* text) {
     text[end] = 0;
 }
 
-static int shell_run_script(const char* input_path) {
+int shell_run_script(const char* input_path) {
     char path[SHELL_PATH_MAX];
     char line[SHELL_LINE_MAX];
     FILE* file;

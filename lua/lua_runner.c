@@ -5,6 +5,7 @@
 #include "stdlib.h"
 #include "lua_runner.h"
 #include "program_runtime.h"
+#include "shell_commands.h"
 
 #include "ff.h"
 
@@ -19,10 +20,12 @@
 
 #include "lua_input.h"
 #include "lua_fs.h"
+#include "lua_shell_api.h"
 
 #define LUA_RUNNER_ATTR __attribute__((noinline, used, optimize("O0")))
 #define LUA_RUNNER_CLOSE_HOOK_INSTRUCTIONS 1024
 #define LUA_RUNNER_ALT_F4_EXIT_STATUS 0
+#define LUA_RUNNER_PATH_MAX 512
 
 typedef struct LuaFileReader {
     FIL file;
@@ -209,6 +212,58 @@ static void neon_lua_set_args(
     lua_setglobal(state, "arg");
 }
 
+static int lua_program_directory_from_path(
+    const char* file_path,
+    char* output,
+    int output_size
+) {
+    int length = 0;
+    int slash_index = -1;
+    int index;
+
+    if (
+        file_path == NULL ||
+        output == NULL ||
+        output_size < 4
+    ) {
+        return -1;
+    }
+
+    while (file_path[length] != 0) {
+        if (
+            file_path[length] == '/' ||
+            file_path[length] == '\\'
+        ) {
+            slash_index = length;
+        }
+
+        length++;
+    }
+
+    if (slash_index < 2) {
+        return -1;
+    }
+
+    if (slash_index == 2) {
+        output[0] = file_path[0];
+        output[1] = ':';
+        output[2] = '/';
+        output[3] = 0;
+        return 0;
+    }
+
+    if (slash_index + 1 > output_size) {
+        return -1;
+    }
+
+    for (index = 0; index < slash_index; index++) {
+        output[index] = file_path[index];
+    }
+
+    output[slash_index] = 0;
+    return 0;
+}
+
 
 int lua_run_file_args(const char* path, int argc, char** argv) {
     LuaFileReader reader;
@@ -216,6 +271,10 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     lua_State* state;
     int status;
     int exit_status;
+    char resolved_path[LUA_RUNNER_PATH_MAX];
+    char previous_shell_directory[LUA_RUNNER_PATH_MAX];
+    char program_directory[LUA_RUNNER_PATH_MAX];
+    int restore_shell_directory = 0;
 
     if (path == NULL || path[0] == '\0') {
         console_write("lua: no script path\n");
@@ -227,12 +286,23 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
         return LUA_RUNNER_ERR_INVALID_PATH;
     }
 
+    if (
+        shell_resolve_path(
+            path,
+            resolved_path,
+            sizeof(resolved_path)
+        ) != 0
+    ) {
+        console_write("lua: invalid script path\n");
+        return LUA_RUNNER_ERR_INVALID_PATH;
+    }
+
     reader.opened = 0;
-    reader.result = f_open(&reader.file, path, FA_READ);
+    reader.result = f_open(&reader.file, resolved_path, FA_READ);
 
     if (reader.result != FR_OK) {
         console_write("lua: cannot open ");
-        console_write(path);
+        console_write(resolved_path);
         console_write("\n");
         return LUA_RUNNER_ERR_OPEN_FILE;
     }
@@ -264,12 +334,14 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     luaL_requiref(state, "fs", luaopen_fs, 1);
     lua_pop(state, 1);
 
+    luaL_requiref(state, "shell", luaopen_shell, 1);
+    lua_pop(state, 1);
 
     status = lua_load(
         state,
         neon_lua_file_reader,
         &reader,
-        path,
+        resolved_path,
         "t"
     );
 
@@ -288,7 +360,26 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
         return LUA_RUNNER_ERR_LOAD;
     }
 
-    neon_lua_set_args(state, path, argc, argv);
+    neon_lua_set_args(state, resolved_path, argc, argv);
+
+    if (
+        lua_program_directory_from_path(
+            resolved_path,
+            program_directory,
+            sizeof(program_directory)
+        ) != 0 ||
+        shell_get_current_directory(
+            previous_shell_directory,
+            sizeof(previous_shell_directory)
+        ) != 0 ||
+        shell_set_current_directory(program_directory) != 0
+    ) {
+        console_write("lua: cannot enter program directory\n");
+        lua_close(state);
+        return LUA_RUNNER_ERR_INVALID_PATH;
+    }
+
+    restore_shell_directory = 1;
 
     session.state = state;
 
@@ -317,6 +408,11 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     }
 
     status = lua_pcall(state, argc, LUA_MULTRET, 0);
+
+    if (restore_shell_directory) {
+        (void)shell_set_current_directory(previous_shell_directory);
+        restore_shell_directory = 0;
+    }
 
     lua_sethook(state, NULL, 0, 0);
 

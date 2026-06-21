@@ -63,3 +63,4 @@ endif()
 
 add_subdirectory(input)
 add_subdirectory(fs)
+add_subdirectory(shell)

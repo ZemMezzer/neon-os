@@ -7,6 +7,8 @@
 #include "stdio.h"
 #include "shell.h"
 #include "arch.h"
+#include "neon_fs.h"
+#include "shell_commands.h"
 
 #if LUA_ENABLED
 #include "lua_shell.h"
@@ -46,6 +48,10 @@ void kernel_main(void) {
 #ifdef LUA_ENABLED
     lua_shell_register_commands();
 #endif
+
+    if(file_exists("0:/system/scripts/boot.sh")){
+        shell_commands_execute("sh 0:/system/scripts/boot.sh");
+    }
 
     while (1) {
         shell_update();
