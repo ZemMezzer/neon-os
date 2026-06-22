@@ -1,0 +1,7 @@
+lua=lua.lua
+npkg=.package_installer
+sh=terminal
+txt=notes
+c=notes
+cpp=notes
+h=notes

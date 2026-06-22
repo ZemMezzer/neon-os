@@ -6,6 +6,12 @@ typedef int (*ShellCommandFallbackFn)(
     int* out_status
 );
 
+typedef int (*ShellPathDirectoryVisitor)(
+    const char* directory,
+    int path_index,
+    void* user_data
+);
+
 int shell_register_command(
     const char* name,
     const char* help,
@@ -32,6 +38,20 @@ int shell_find_command_file(
     char* output,
     int output_size
 );
+
+int shell_find_path(
+    const char* name,
+    char* output,
+    int output_size
+);
+
+int shell_visit_path_directories(
+    ShellPathDirectoryVisitor visitor,
+    void* user_data
+);
+
+
+int shell_is_direct_child_of_path(const char* absolute_path);
 
 int shell_run_script(const char* input_path);
 

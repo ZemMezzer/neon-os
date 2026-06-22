@@ -4,7 +4,7 @@
 #include "builtin_apps_install.h"
 
 
-#define BUILTIN_APPS_MARKER_PATH "0:/system/variables/.neonos-defaults"
+#define BUILTIN_APPS_MARKER_PATH "0:/.system/variables/.neonos-defaults"
 #define BUILTIN_APPS_PATH_CAPACITY 512
 #define BUILTIN_APPS_WRITE_CHUNK 512
 

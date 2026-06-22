@@ -593,6 +593,37 @@ local function startup_command_from_args(argv)
     return table.concat(parts, " ")
 end
 
+local function apply_start_directory(argv)
+    local directory = "0:/"
+
+    if argv[1] == "--cwd" then
+        directory = tostring(argv[2] or "")
+
+        table.remove(argv, 1)
+        table.remove(argv, 1)
+
+        if directory == "" then
+            add_output("Terminal error: missing --cwd path")
+            return
+        end
+    end
+
+    local quoted, quote_error = shell_quote(directory)
+
+    if not quoted then
+        add_output("Terminal error: " .. quote_error)
+        return
+    end
+
+    local status = shell.exec("cd " .. quoted)
+
+    if status ~= 0 then
+        add_output("Terminal error: cannot enter " .. directory)
+    end
+end
+
+apply_start_directory(launch_args)
+
 local startup_command = startup_command_from_args(launch_args)
 if startup_command then
     run_command(startup_command)

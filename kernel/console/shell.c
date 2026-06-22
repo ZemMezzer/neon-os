@@ -21,6 +21,24 @@ static void shell_prompt(void) {
     prompt_y = console_get_cursor_y();
 }
 
+static void shell_restore_prompt_if_needed(void) {
+    if (
+        console_get_cursor_x() == prompt_x + line_cursor &&
+        console_get_cursor_y() == prompt_y
+    ) {
+        return;
+    }
+
+    line_length = 0;
+    line_cursor = 0;
+    line_buffer[0] = '\0';
+
+    console_cursor_hide();
+    shell_prompt();
+    console_cursor_show();
+}
+
+
 static int shell_can_insert_char(void) {
     if (line_length >= SHELL_BUFFER_SIZE - 1) {
         return 0;
@@ -247,6 +265,8 @@ void shell_init(void) {
 
 void shell_update(void) {
     InputEvent event;
+
+    shell_restore_prompt_if_needed();
 
     input_update();
 

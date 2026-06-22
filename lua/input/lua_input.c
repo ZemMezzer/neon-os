@@ -212,7 +212,6 @@ static int lua_input_poll_latest(lua_State* state) {
 }
 
 
-/* input.any_pressed() -> boolean */
 static int lua_input_any_pressed(lua_State* state) {
     lua_input_begin_frame_if_needed();
 

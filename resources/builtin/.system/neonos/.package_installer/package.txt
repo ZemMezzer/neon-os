@@ -1,0 +1,4 @@
+name=Package Installer
+version=1.0.0
+description=NeonOS Package installer
+icon=

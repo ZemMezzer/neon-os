@@ -2,6 +2,7 @@ local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
 local shell = require("shell")
+local buffer = require("buffer")
 
 local args = { ... }
 
@@ -13,7 +14,6 @@ local FONT_W = 6 * FONT_SCALE
 local FONT_H = 8 * FONT_SCALE
 local LINE_H = FONT_H + 3
 
--- NeonOS graphite / red palette.
 local THEME = {
     bg_lower = 0x00181718,
     bg_bottom = 0x00131315,
@@ -46,7 +46,6 @@ local COLOR_CURSOR = THEME.white
 local COLOR_BLACK = THEME.bg_bottom
 
 local DEFAULT_NOTES_DIR = "0:/notes"
-local PICK_RESULT_FILE = "0:/system/variables/.notes_pick.tmp"
 local MAX_UNDO = 40
 local TAB_WIDTH = 4
 
@@ -59,7 +58,6 @@ local scroll_y = 1
 local dirty = false
 local running = true
 local status = "READY"
-local clipboard = ""
 local undo_stack = {}
 local sel_line = nil
 local sel_col = nil
@@ -607,33 +605,71 @@ local function end_key(extend)
 end
 
 local function copy_selection()
+    local copied
+    local error_message
+
     if not has_selection() then
         status = "NO SELECTION"
         return
     end
 
-    clipboard = selected_text()
+    copied, error_message = buffer.clipboard_set(selected_text())
+
+    if copied ~= true then
+        status = "CLIPBOARD FAILED"
+
+        if error_message ~= nil and error_message ~= "" then
+            status = status .. ": " .. tostring(error_message)
+        end
+
+        return
+    end
+
     status = "COPIED"
 end
 
 local function cut_selection()
+    local copied
+    local error_message
+
     if not has_selection() then
         status = "NO SELECTION"
         return
     end
 
-    clipboard = selected_text()
+    copied, error_message = buffer.clipboard_set(selected_text())
+
+    if copied ~= true then
+        status = "CLIPBOARD FAILED"
+
+        if error_message ~= nil and error_message ~= "" then
+            status = status .. ": " .. tostring(error_message)
+        end
+
+        return
+    end
+
     delete_selection()
     status = "CUT"
 end
 
 local function paste_clipboard()
-    if clipboard == "" then
-        status = "CLIPBOARD EMPTY"
+    local clipboard_text
+    local error_message
+
+    clipboard_text, error_message = buffer.clipboard_get()
+
+    if clipboard_text == nil then
+        if error_message ~= nil and error_message ~= "" then
+            status = "CLIPBOARD FAILED: " .. tostring(error_message)
+        else
+            status = "CLIPBOARD EMPTY"
+        end
+
         return
     end
 
-    insert_text(clipboard)
+    insert_text(clipboard_text)
     status = "PASTED"
 end
 
@@ -909,36 +945,7 @@ local function ask_new_file(dir)
 end
 
 local function shell_quote(value)
-    -- The NeonOS shell parser supports quoted arguments. File names created
-    -- by Notes do not permit quotes, so stripping them here is enough.
     return '"' .. tostring(value or ""):gsub('"', "") .. '"'
-end
-
-local function delete_picker_result()
-    pcall(function()
-        if fs.exists(PICK_RESULT_FILE) then
-            fs.delete(PICK_RESULT_FILE)
-        end
-    end)
-end
-
-local function read_picker_result()
-    local handle = io.open(PICK_RESULT_FILE, "r")
-    local value = nil
-
-    if handle then
-        value = handle:read("*a")
-        handle:close()
-    end
-
-    delete_picker_result()
-
-    value = tostring(value or ""):gsub("\r", ""):gsub("\n", "")
-    if value == "" then
-        return nil
-    end
-
-    return normalize_path(value)
 end
 
 local function choose_in_explorer(kind, start_path)
@@ -951,29 +958,22 @@ local function choose_in_explorer(kind, start_path)
     else
         flag = "--pick-file"
     end
+
     local start = normalize_path(start_path or "0:/")
     local ok
     local result
+    local picked
+    local buffer_error
 
-    local ensured, ensure_error = ensure_directory(path_dir(PICK_RESULT_FILE))
-    if not ensured then
-        status = "PICKER FAILED: " .. tostring(ensure_error)
-        return nil
-    end
+    buffer.clear("explorer.pick_result")
 
-    delete_picker_result()
-
-    -- Clear the editor before the nested program takes over the framebuffer.
     gfx.clear(COLOR_BG)
     gfx.present()
 
-    -- Explorer is resolved like any other NeonOS application:
-    -- first from the current folder, then through PATH.txt.
     ok, result = pcall(
         shell.exec,
-        "explorer" ..
+        "open " .. shell_quote("explorer") ..
         " " .. flag ..
-        " " .. shell_quote(PICK_RESULT_FILE) ..
         " " .. shell_quote(start)
     )
 
@@ -989,7 +989,18 @@ local function choose_in_explorer(kind, start_path)
         return nil
     end
 
-    return read_picker_result()
+    picked, buffer_error = buffer.take("explorer.pick_result")
+
+    if picked == nil then
+        if buffer_error ~= nil then
+            status = "PICKER FAILED: " .. tostring(buffer_error)
+            needs_draw = true
+        end
+
+        return nil
+    end
+
+    return normalize_path(picked)
 end
 
 local function load_editor_file(path)
@@ -1206,8 +1217,6 @@ end
 local function resolve_target_path()
     local requested = args[1]
 
-    -- With no target, Explorer may return an existing file or a folder
-    -- where a new note should be created.
     if requested == nil or requested == "" then
         local selected_path = choose_in_explorer("path", "0:/")
 
@@ -1224,8 +1233,6 @@ local function resolve_target_path()
 
     local path = normalize_path(requested)
 
-    -- A folder argument starts Explorer in that folder, still selecting a
-    -- file. New files are created with Ctrl+Shift+S from the editor.
     if fs.exists(path) and fs.isDir(path) then
         return choose_in_explorer("file", path)
     end
@@ -1256,7 +1263,6 @@ if file_path then
             needs_draw = false
         end
 
-        -- gfx.present() also starts the next safe Lua input frame.
         gfx.present()
     end
 end
