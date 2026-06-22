@@ -11,7 +11,7 @@
 #include "shell_commands.h"
 
 #if LUA_ENABLED
-#include "lua_shell.h"
+#include "neon_lua.h"
 #endif
 
 #if BUILTIN_RESOURCES_ENABLED
@@ -46,11 +46,11 @@ void kernel_main(void) {
     shell_init();
 
 #ifdef LUA_ENABLED
-    lua_shell_register_commands();
+    lua_init();
 #endif
 
-    if(file_exists("0:/system/scripts/boot.sh")){
-        shell_commands_execute("sh 0:/system/scripts/boot.sh");
+    if(file_exists("0:/.system/scripts/boot.sh")){
+        shell_commands_execute("sh 0:/.system/scripts/boot.sh");
     }
 
     while (1) {

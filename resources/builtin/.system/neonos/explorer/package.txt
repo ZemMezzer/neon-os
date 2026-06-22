@@ -1,0 +1,4 @@
+name=Explorer
+version=1.0.0
+description=File Explorer
+icon=icon.pkicn

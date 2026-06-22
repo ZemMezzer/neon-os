@@ -1,6 +1,9 @@
 #include "shell_commands.h"
 #include "program_runtime.h"
 
+#include "package_runner.h"
+#include "package_shell.h"
+
 #include <stddef.h>
 
 #include "console.h"
@@ -12,11 +15,11 @@
 
 #define SHELL_MAX_COMMANDS 32
 
-#define SHELL_PATH_FILE "0:/system/variables/PATH.txt"
+#define SHELL_PATH_FILE "0:/.system/variables/PATH.txt"
 #define SHELL_PATH_MAX_ENTRIES 16
 
-#define SHELL_ALIAS_FILE "0:/system/variables/ALIAS.txt"
-#define SHELL_ALIAS_TEMP_FILE "0:/system/variables/ALIAS.tmp"
+#define SHELL_ALIAS_FILE "0:/.system/variables/ALIAS.txt"
+#define SHELL_ALIAS_TEMP_FILE "0:/.system/variables/ALIAS.tmp"
 #define SHELL_ALIAS_EXTENSION_MAX 64
 
 #define SHELL_SCRIPT_MAX_DEPTH 8
@@ -677,6 +680,92 @@ static char shell_ascii_to_lower(char character) {
     return character;
 }
 
+
+static int shell_path_equal_case_insensitive(
+    const char* left,
+    const char* right
+) {
+    int index = 0;
+
+    if (left == NULL || right == NULL) {
+        return 0;
+    }
+
+    while (left[index] != '\0' && right[index] != '\0') {
+        if (
+            shell_ascii_to_lower(left[index]) !=
+            shell_ascii_to_lower(right[index])
+        ) {
+            return 0;
+        }
+
+        index++;
+    }
+
+    return left[index] == right[index];
+}
+
+static int shell_path_is_direct_child_of(
+    const char* parent,
+    const char* child
+) {
+    int parent_length;
+    int index;
+    int child_name_start;
+
+    if (parent == NULL || child == NULL) {
+        return 0;
+    }
+
+    parent_length = shell_str_len(parent);
+
+    if (parent_length <= 0) {
+        return 0;
+    }
+
+    for (index = 0; index < parent_length; index++) {
+        if (
+            child[index] == '\0' ||
+            shell_ascii_to_lower(parent[index]) !=
+            shell_ascii_to_lower(child[index])
+        ) {
+            return 0;
+        }
+    }
+
+    child_name_start = parent_length;
+
+    if (parent[parent_length - 1] != '/') {
+        if (child[child_name_start] != '/') {
+            return 0;
+        }
+
+        child_name_start++;
+    }
+
+    if (child[child_name_start] == '\0') {
+        return 0;
+    }
+
+    if (
+        (child[child_name_start] == '.' &&
+         child[child_name_start + 1] == '\0') ||
+        (child[child_name_start] == '.' &&
+         child[child_name_start + 1] == '.' &&
+         child[child_name_start + 2] == '\0')
+    ) {
+        return 0;
+    }
+
+    for (index = child_name_start; child[index] != '\0'; index++) {
+        if (child[index] == '/' || child[index] == '\\') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static int shell_get_file_extension(
     const char* path,
     char* output,
@@ -932,6 +1021,8 @@ static int shell_build_open_command(
     output[0] = 0;
 
     if (
+        shell_append_text(output, output_size, &position, "open") != 0 ||
+        shell_append_char(output, output_size, &position, ' ') != 0 ||
         shell_append_text(output, output_size, &position, application) != 0 ||
         shell_append_char(output, output_size, &position, ' ') != 0 ||
         shell_append_char(output, output_size, &position, '"') != 0 ||
@@ -1314,6 +1405,172 @@ static int shell_name_has_path_syntax(const char* name) {
         }
 
         i++;
+    }
+
+    return 0;
+}
+
+int shell_visit_path_directories(
+    ShellPathDirectoryVisitor visitor,
+    void* user_data
+) {
+    ShellPathList paths;
+    int index;
+
+    if (visitor == NULL) {
+        return -1;
+    }
+
+    if (shell_load_path_list(&paths) != 0) {
+        return -1;
+    }
+
+    for (index = 0; index < paths.count; index++) {
+        int earlier_index;
+        int duplicate = 0;
+        int visitor_result;
+
+        if (!shell_directory_exists(paths.absolute[index])) {
+            continue;
+        }
+
+        for (earlier_index = 0; earlier_index < index; earlier_index++) {
+            if (
+                shell_directory_exists(paths.absolute[earlier_index]) &&
+                shell_path_equal_case_insensitive(
+                    paths.absolute[earlier_index],
+                    paths.absolute[index]
+                )
+            ) {
+                duplicate = 1;
+                break;
+            }
+        }
+
+        if (duplicate) {
+            continue;
+        }
+
+        visitor_result = visitor(paths.absolute[index], index, user_data);
+
+        if (visitor_result != 0) {
+            return visitor_result;
+        }
+    }
+
+    return 0;
+}
+
+int shell_is_direct_child_of_path(const char* absolute_path) {
+    ShellPathList paths;
+    char normalized_path[SHELL_PATH_MAX];
+    int index;
+
+    if (absolute_path == NULL || absolute_path[0] == '\0') {
+        return -1;
+    }
+
+    if (
+        shell_resolve_path(
+            absolute_path,
+            normalized_path,
+            sizeof(normalized_path)
+        ) != 0
+    ) {
+        return -1;
+    }
+
+    if (shell_load_path_list(&paths) != 0) {
+        return -1;
+    }
+
+    for (index = 0; index < paths.count; index++) {
+        if (!shell_directory_exists(paths.absolute[index])) {
+            continue;
+        }
+
+        if (
+            shell_path_is_direct_child_of(
+                paths.absolute[index],
+                normalized_path
+            )
+        ) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int shell_find_path(
+    const char* name,
+    char* output,
+    int output_size
+) {
+    ShellPathList paths;
+    char candidate[SHELL_PATH_MAX];
+
+    if (
+        !name ||
+        name[0] == 0 ||
+        !output ||
+        output_size <= 0
+    ) {
+        return -1;
+    }
+
+    output[0] = 0;
+
+    if (shell_name_has_path_syntax(name)) {
+        if (
+            shell_resolve_path(name, candidate, sizeof(candidate)) != 0
+        ) {
+            return -1;
+        }
+
+        if (path_exists(candidate)) {
+            shell_copy(output, output_size, candidate);
+            return 1;
+        }
+
+        return 0;
+    }
+
+    if (
+        shell_resolve_path(name, candidate, sizeof(candidate)) != 0
+    ) {
+        return -1;
+    }
+
+    if (path_exists(candidate)) {
+        shell_copy(output, output_size, candidate);
+        return 1;
+    }
+
+    if (shell_load_path_list(&paths) != 0) {
+        return -1;
+    }
+
+    for (int index = 0; index < paths.count; index++) {
+        if (!shell_directory_exists(paths.absolute[index])) {
+            continue;
+        }
+
+        if (
+            shell_join_path(
+                paths.absolute[index],
+                name,
+                candidate,
+                sizeof(candidate)
+            ) != 0
+        ) {
+            continue;
+        }
+
+        if (path_exists(candidate)) {
+            shell_copy(output, output_size, candidate);
+            return 1;
+        }
     }
 
     return 0;
@@ -2131,21 +2388,96 @@ static int cmd_open(int argc, char** argv) {
     char extension[SHELL_ALIAS_EXTENSION_MAX];
     char application[SHELL_PATH_MAX];
     char command[SHELL_LINE_MAX];
+    int found;
     int extension_result;
     int alias_result;
 
-    if (argc != 2) {
-        shell_print_error("usage: open <file>");
+    if (argc < 2) {
+        shell_print_error("usage: open <file-or-package> [arguments...]");
         return -1;
     }
 
-    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
-        shell_print_error("path too long");
+    found = shell_find_path(argv[1], path, sizeof(path));
+
+    if (found < 0) {
+        shell_print_error("cannot search PATH");
+        return -1;
+    }
+
+    if (found == 0) {
+        shell_print_error("file or package not found");
+        return -1;
+    }
+
+    if (shell_directory_exists(path)) {
+        int program_status = 1;
+        PackageOpenResult package_result;
+        char launch_directory[SHELL_PATH_MAX];
+        char* package_argv[SHELL_MAX_ARGS];
+        int package_argc = argc - 2;
+        int index;
+
+        if (
+            shell_script_depth > 0 &&
+            shell_str_equal(argv[1], "terminal")
+        ) {
+            if (
+                shell_get_current_directory(
+                    launch_directory,
+                    sizeof(launch_directory)
+                ) != 0 ||
+                package_argc + 2 > SHELL_MAX_ARGS
+            ) {
+                shell_print_error("cannot prepare terminal directory");
+                return -1;
+            }
+
+            package_argv[0] = "--cwd";
+            package_argv[1] = launch_directory;
+
+            for (index = 0; index < package_argc; index++) {
+                package_argv[index + 2] = argv[index + 2];
+            }
+
+            package_argc += 2;
+        } else {
+            for (index = 0; index < package_argc; index++) {
+                package_argv[index] = argv[index + 2];
+            }
+        }
+
+        package_result = package_runner_open(
+            path,
+            package_argc,
+            package_argv,
+            &program_status
+        );
+
+        if (package_result == PACKAGE_OPEN_STARTED) {
+            return program_status;
+        }
+
+        if (package_result == PACKAGE_OPEN_NOT_PACKAGE) {
+            shell_print_error("directory is not an installed package");
+            return -1;
+        }
+
+        if (package_result == PACKAGE_OPEN_NO_RUNNER) {
+            shell_print_error("package has no supported runner");
+            return -1;
+        }
+
+        shell_print_error("package runner failed");
         return -1;
     }
 
     if (!shell_regular_file_exists(path)) {
-        shell_print_error("file not found");
+        shell_print_error("path is neither a file nor a package");
+        return -1;
+    }
+
+    if (argc != 2) {
+        shell_print_error("file associations do not accept arguments");
         return -1;
     }
 
@@ -2243,10 +2575,13 @@ static void shell_trim_script_line(char* text) {
 
 int shell_run_script(const char* input_path) {
     char path[SHELL_PATH_MAX];
+    char previous_directory[SHELL_PATH_MAX];
+    char script_directory[SHELL_PATH_MAX];
     char line[SHELL_LINE_MAX];
     NeonFsFile file;
     FRESULT result;
     int script_status = 0;
+    int directory_changed = 0;
 
     if (shell_script_depth >= SHELL_SCRIPT_MAX_DEPTH) {
         shell_print_error("script nesting limit reached");
@@ -2269,6 +2604,27 @@ int shell_run_script(const char* input_path) {
         return -1;
     }
 
+    if (
+        shell_get_current_directory(
+            previous_directory,
+            sizeof(previous_directory)
+        ) != 0
+    ) {
+        (void)neon_fs_file_close(&file);
+        shell_print_error("cannot read current directory");
+        return -1;
+    }
+
+    shell_copy(script_directory, sizeof(script_directory), path);
+    shell_path_parent(script_directory);
+
+    if (shell_set_current_directory(script_directory) != 0) {
+        (void)neon_fs_file_close(&file);
+        shell_print_error("cannot enter script directory");
+        return -1;
+    }
+
+    directory_changed = 1;
     shell_script_depth++;
 
     for (;;) {
@@ -2281,6 +2637,11 @@ int shell_run_script(const char* input_path) {
         if (line_result < 0) {
             (void)neon_fs_file_close(&file);
             shell_script_depth--;
+
+            if (directory_changed) {
+                (void)shell_set_current_directory(previous_directory);
+            }
+
             shell_print_error("cannot read script");
             return -1;
         }
@@ -2308,15 +2669,23 @@ int shell_run_script(const char* input_path) {
 
     if (neon_fs_file_close(&file) != FR_OK) {
         shell_script_depth--;
+
+        if (directory_changed) {
+            (void)shell_set_current_directory(previous_directory);
+        }
+
         shell_print_error("cannot close script");
         return -1;
     }
 
     shell_script_depth--;
 
+    if (directory_changed) {
+        (void)shell_set_current_directory(previous_directory);
+    }
+
     return script_status;
 }
-
 
 static int cmd_sh(int argc, char** argv) {
     if (argc != 2) {
@@ -2379,6 +2748,12 @@ void shell_commands_init(void) {
     (void)shell_register_command("echo", "print text", cmd_echo);
     (void)shell_register_command("path", "show or edit command PATH", cmd_path);
     (void)shell_register_command("alias", "add or remove file associations", cmd_alias);
-    (void)shell_register_command("open", "open file with ALIAS.txt association", cmd_open);
+    (void)shell_register_command(
+        "open",
+        "open a file or installed package",
+        cmd_open
+    );
     (void)shell_register_command("sh", "run a shell script", cmd_sh);
+
+    package_shell_register_commands();
 }

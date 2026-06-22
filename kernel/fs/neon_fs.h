@@ -1,6 +1,3 @@
-#ifndef NEON_FS_H
-#define NEON_FS_H
-
 #include <stdint.h>
 
 #include "ff.h"
@@ -8,9 +5,7 @@
 #define NEON_FS_PATH_MAX 512
 #define NEON_FS_NAME_MAX 256
 
-#ifndef PATH_MAX
 #define PATH_MAX NEON_FS_PATH_MAX
-#endif
 
 typedef struct NeonFsEntry {
     char name[NEON_FS_NAME_MAX];
@@ -87,5 +82,3 @@ FRESULT close_directory(NeonFsDirectory* directory);
 
 FRESULT get_free_space(const char* path, uint64_t* out_bytes);
 FRESULT get_capacity(const char* path, uint64_t* out_bytes);
-
-#endif

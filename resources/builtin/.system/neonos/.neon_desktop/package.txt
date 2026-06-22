@@ -1,0 +1,4 @@
+name=Dekstop
+version=1.0.0
+description=NeonOS Desktop app
+icon=

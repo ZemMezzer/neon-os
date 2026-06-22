@@ -44,6 +44,7 @@ target_sources(third_party PRIVATE
     # NeonOS glue
     lua_shell.c
     lua_runner.c
+    neon_lua.c
 )
 
 target_include_directories(third_party PUBLIC
@@ -64,3 +65,6 @@ endif()
 add_subdirectory(input)
 add_subdirectory(fs)
 add_subdirectory(shell)
+add_subdirectory(zip)
+add_subdirectory(packages)
+add_subdirectory(buffer)

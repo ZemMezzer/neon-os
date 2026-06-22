@@ -2,8 +2,15 @@ local gfx = require("gfx")
 local input = require("input")
 local fs = require("fs")
 local shell = require("shell")
+local buffer = require("buffer")
 
 local args = { ... }
+
+local HIDDEN_PATHS = {
+    ["0:/.system"] = true,
+    ["0:/.packages"] = true,
+    ["0:/.desktop"] = true,
+}
 
 local THEME = {
     bg_top = 0x00262523,
@@ -76,21 +83,10 @@ local status = "Ready"
 local running = true
 local dirty = true
 
--- nil while browsing normally.
--- { kind = "copy" | "move", source = item } while choosing a destination.
 local target_mode = nil
 
--- When launched by Notes:
---   explorer --pick-file <result_file> [start_folder]
---   explorer --pick-folder <result_file> [start_folder]
---   explorer --pick-path <result_file> [start_folder]
---
--- The selected path is written to result_file and Explorer exits. This tiny
--- hand-off file is deleted by Notes after reading it.
 local picker_mode = nil
-local picker_result_path = nil
 
--- nil, or a modal table for confirmation/text entry.
 local modal = nil
 
 local function is_root(path)
@@ -174,62 +170,34 @@ local function lower_shortcut(key)
     return key
 end
 
-local function ensure_picker_parent()
-    local parent = fs.getDir(picker_result_path)
-
-    if parent == nil or parent == "" or parent == "0:" or parent == "0:/" then
-        return true
-    end
-
-    if fs.exists(parent) then
-        return fs.isDir(parent)
-    end
-
-    local current = "0:"
-    local remainder = normalize_launch_path(parent):sub(4)
-
-    for part in remainder:gmatch("[^/]+") do
-        current = current .. "/" .. part
-
-        if fs.exists(current) then
-            if not fs.isDir(current) then
-                return false
-            end
-        else
-            local ok = pcall(fs.makeDir, current)
-            if not ok then
-                return false
-            end
-        end
-    end
-
-    return true
+local function is_hidden_path(path)
+    local normalized = normalize_launch_path(path):lower()
+    return HIDDEN_PATHS[normalized] == true
 end
 
 local function finish_picker(path)
-    local handle
+    local stored
+    local error_message
 
     if not picker_mode then
         return false
     end
 
-    if not ensure_picker_parent() then
-        status = "Cannot create picker folder"
+    stored, error_message = buffer.set(
+        "explorer.pick_result",
+        normalize_launch_path(path)
+    )
+
+    if stored ~= true then
+        status = "Cannot store picker result"
+
+        if error_message ~= nil and error_message ~= "" then
+            status = status .. ": " .. tostring(error_message)
+        end
+
         dirty = true
         return false
     end
-
-    handle = io.open(picker_result_path, "w")
-
-    if not handle then
-        status = "Cannot write picker result"
-        dirty = true
-        return false
-    end
-
-    handle:write(normalize_launch_path(path))
-    handle:write("\n")
-    handle:close()
 
     running = false
     return true
@@ -246,11 +214,6 @@ local function parse_picker_args()
         return
     end
 
-    if args[2] == nil or args[2] == "" then
-        status = "Picker needs a result file"
-        return
-    end
-
     if flag == "--pick-folder" then
         picker_mode = "folder"
     elseif flag == "--pick-path" then
@@ -259,8 +222,8 @@ local function parse_picker_args()
         picker_mode = "file"
     end
 
-    picker_result_path = normalize_launch_path(args[2])
-    start = normalize_launch_path(args[3] or "0:/")
+    buffer.clear("explorer.pick_result")
+    start = normalize_launch_path(args[2] or "0:/")
 
     if fs.exists(start) and fs.isDir(start) then
         cwd = start
@@ -388,15 +351,18 @@ local function load_items(message)
 
     for index = 1, #result do
         local entry = result[index]
+        local entry_path = fs.combine(cwd, entry.name)
 
-        table.insert(new_items, {
-            name = entry.name,
-            path = fs.combine(cwd, entry.name),
-            isDir = entry.isDir == true,
-            parent = false,
-            size = entry.size or 0,
-            readonly = entry.readonly == true
-        })
+        if not is_hidden_path(entry_path) then
+            table.insert(new_items, {
+                name = entry.name,
+                path = entry_path,
+                isDir = entry.isDir == true,
+                parent = false,
+                size = entry.size or 0,
+                readonly = entry.readonly == true
+            })
+        end
     end
 
     items = new_items
@@ -488,8 +454,6 @@ local function open_selected_item()
     end
 
     if picker_mode == "folder" then
-        -- Folder selection is two-step: Enter opens a highlighted folder.
-        -- Space, E or F2 confirms the folder currently open.
         if item.parent then
             go_parent()
         elseif item.isDir then
@@ -544,7 +508,6 @@ local function draw_file_row_icon(x, y, selected)
     gfx.fill_rect(x + 3, y + 1, 10, 15, paper)
     gfx.rect(x + 3, y + 1, 10, 15, line)
 
-    -- Folded top-right page corner.
     gfx.fill_rect(x + 10, y + 2, 2, 3, fold)
     gfx.line(x + 5, y + 8, x + 11, y + 8, line)
     gfx.line(x + 5, y + 11, x + 11, y + 11, line)
@@ -684,24 +647,24 @@ local function draw_ui()
 
     if picker_mode == "file" then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter: open folder / choose file   Right: open folder", COLOR.text, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Esc/Tab/Q: cancel", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "Selected file returns to Notes", COLOR.muted, footer_chars)
     elseif picker_mode == "folder" then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/Right: open folder   Space/E/F2: choose current folder", COLOR.text, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "N: new folder   Backspace/Left: parent   Esc/Tab/Q: cancel", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "Choose current folder to return to Notes", COLOR.muted, footer_chars)
     elseif picker_mode == "path" then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter: open folder / choose file   Right: open folder", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "Space/E/F2: choose current folder   N: new folder", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "Backspace/Left: parent   Tab or Q: cancel", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "Backspace/Left: parent   Esc/Tab/Q: cancel", COLOR.muted, footer_chars)
     elseif target_mode then
         text_at(PADDING, SCREEN_HEIGHT - 62, "Right/O: open folder   Enter: choose this folder", COLOR.text, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 42, "Backspace/Left: parent   Tab: cancel", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 42, "Backspace/Left: parent   Esc/Tab: cancel", COLOR.muted, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 22, "Source: " .. target_mode.source.name, COLOR.muted, footer_chars)
     else
         text_at(PADDING, SCREEN_HEIGHT - 62, "Enter/E open  Right open folder  Backspace/Left parent", COLOR.text, footer_chars)
         text_at(PADDING, SCREEN_HEIGHT - 42, "D delete  N mkdir  R rename  C copy  M move", COLOR.muted, footer_chars)
-        text_at(PADDING, SCREEN_HEIGHT - 22, "F refresh  I info  [/] page  Home/End bounds  Q quit", COLOR.muted, footer_chars)
+        text_at(PADDING, SCREEN_HEIGHT - 22, "F refresh  I info  [/] page  Home/End bounds  Esc/Q quit", COLOR.muted, footer_chars)
     end
 
     draw_modal()
@@ -873,8 +836,6 @@ local function make_directory(open_after_create)
                 return
             end
 
-            -- During folder picking, go straight into the newly created
-            -- directory so it can immediately become the save destination.
             if open_after_create then
                 cwd = normalize_root(path)
                 selected = 1
@@ -990,7 +951,7 @@ local function handle_modal_key(key)
             return
         end
 
-        if shortcut == input.N or key == input.TAB then
+        if shortcut == input.N or key == input.TAB or key == input.ESCAPE then
             local callback = modal.on_no
             if callback then
                 callback()
@@ -1016,7 +977,7 @@ local function handle_modal_key(key)
             return
         end
 
-        if key == input.TAB then
+        if key == input.TAB or key == input.ESCAPE then
             modal = nil
             set_status("Cancelled")
             return
@@ -1042,7 +1003,7 @@ end
 local function handle_target_key(key)
     local shortcut = lower_shortcut(key)
 
-    if key == input.TAB or shortcut == input.Q then
+    if key == input.TAB or key == input.ESCAPE or shortcut == input.Q then
         cancel_target("Operation cancelled")
         return
     end
@@ -1104,18 +1065,23 @@ end
 local function handle_browse_key(key)
     local shortcut = lower_shortcut(key)
 
-    if picker_mode and (key == input.TAB or shortcut == input.Q) then
+    if picker_mode and (
+        key == input.TAB or
+        key == input.ESCAPE or
+        shortcut == input.Q
+    ) then
         running = false
         return
     end
 
-    if not picker_mode and shortcut == input.Q then
+    if not picker_mode and (
+        key == input.ESCAPE or
+        shortcut == input.Q
+    ) then
         running = false
         return
     end
 
-    -- Choose the folder currently open. E/F2 are convenient fallbacks
-    -- if Space is not delivered by the current keyboard layout.
     if (picker_mode == "folder" or picker_mode == "path") and
        (key == input.SPACE or shortcut == input.E or key == input.F2) then
         finish_picker(cwd)
@@ -1173,8 +1139,6 @@ local function handle_browse_key(key)
 
     if picker_mode then
         if shortcut == input.N then
-            -- Available in both file and folder pickers. In a folder picker
-            -- this is the flow used by Notes Save As.
             make_directory(true)
         end
         return

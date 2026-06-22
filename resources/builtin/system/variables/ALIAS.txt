@@ -1,6 +1,0 @@
-lua=lua.lua
-sh=terminal.lua
-txt=notes.lua
-c=notes.lua
-cpp=notes.lua
-h=notes.lua

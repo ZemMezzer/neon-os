@@ -24,6 +24,4 @@
 #define LLONG_MIN (-LLONG_MAX - 1LL)
 #define ULLONG_MAX 18446744073709551615ULL
 
-#ifndef SIZE_MAX
 #define SIZE_MAX ((size_t)-1)
-#endif
