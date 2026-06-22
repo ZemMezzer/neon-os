@@ -38,12 +38,13 @@ Boots without UEFI. No Linux. No runtime dependencies.
 | `alias` | Add or remove file associations |
 | `open <file>` | Open a file using its alias association |
 | `sh <script>` | Run a shell script |
+| `package <subcommand>` | Install, uninstall, or list packages |
 
 ---
 
 ## Lua API
 
-NeonOS exposes four native modules to Lua programs.
+NeonOS exposes seven native modules to Lua programs.
 
 ### `gfx` — Graphics
 
@@ -139,6 +140,118 @@ fs.getCapacity(path)             -- total volume capacity in bytes
 ```
 
 Paths accept both Unix-style (`/folder/file.lua`) and FatFs-style (`0:/folder/file.lua`) notation.
+
+### `npackages` — Package Manager
+
+```lua
+npackages.info(id_or_path)   -- returns package info table, or nil, error
+npackages.path(id_or_path)   -- returns package root path string, or nil, error
+npackages.list()             -- returns array of package info tables, or nil, error
+```
+
+`id_or_path` can be a package name (e.g. `"myapp"`) or a filesystem path containing `/`, `\`, or `:` (e.g. `"0:/packages/myapp"`).
+
+The info table contains:
+
+```lua
+{
+    id          = "myapp",           -- internal package identifier
+    path        = "0:/packages/myapp",
+    name        = "My App",          -- display name
+    version     = "1.0",             -- nil if not specified
+    description = "...",             -- nil if not specified
+    icon_path   = "0:/...",          -- nil if not specified
+    icon_exists = true,              -- boolean
+}
+```
+
+### `buffer` — Shared Key-Value Buffer
+
+An in-memory key-value store for passing data between Lua programs and shell scripts within a session.
+
+```lua
+buffer.set(key, value)    -- store a string value; returns true or nil, error
+buffer.get(key)           -- retrieve a value; returns string or nil
+buffer.take(key)          -- retrieve and remove a value; returns string or nil
+buffer.clear(key)         -- remove a key; returns true (found) or false (not found)
+buffer.exists(key)        -- returns true if key is present
+buffer.clear_all()        -- remove all keys
+```
+
+Clipboard (a dedicated single-slot buffer):
+
+```lua
+buffer.clipboard_set(value)   -- store clipboard string; returns true or nil, error
+buffer.clipboard_get()        -- returns clipboard string or nil
+buffer.clipboard_clear()      -- clears clipboard; returns true or false
+```
+
+### `bitmap` — Image Loading and Drawing
+
+Loads and draws bitmap images. Returns a bitmap object on success, or `nil, error` on failure.
+
+```lua
+local img, err = bitmap.load(path)  -- load an image file; returns bitmap object or nil, error
+```
+
+Bitmap object methods:
+
+```lua
+img:draw(x, y [, scale])  -- draw image at position; scale >= 1 (default 1)
+img:width()                -- image width in pixels
+img:height()               -- image height in pixels
+img:size()                 -- returns width, height
+```
+
+The supported image format is `.pkicn` (see [File Formats](#file-formats)).
+
+---
+
+## File Formats
+
+### `.npkg` — Package Archive
+
+Packages are distributed as `.npkg` archives. Install them with the `package` shell command:
+
+```
+package install myapp.npkg
+package install myapp.npkg custom-name   -- install under a different name
+package list
+package uninstall myapp
+```
+
+Once installed, packages can be opened with the `open` command or queried from Lua via `npackages`.
+
+Each package contains a `package.txt` manifest in its root directory:
+
+```ini
+name=Notes
+version=1.0.0
+description=Text Editor
+icon=icon.pkicn
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Display name shown to the user |
+| `version` | no | Version string (e.g. `1.0.0`) |
+| `description` | no | Short description |
+| `icon` | no | Path to icon file relative to package root (`.pkicn` format) |
+
+### `.pkicn` — Neon Icon / Bitmap Image
+
+A simple custom binary format for images. Structure:
+
+| Offset | Size | Description |
+|--------|------|-------------|
+| 0      | 4    | Magic: `PKIC` |
+| 4      | 2    | Version (must be `1`) |
+| 6      | 2    | Width in pixels |
+| 8      | 2    | Height in pixels |
+| 10     | 2    | Flags (must be `1`) |
+| 12     | w×h×4 | Pixel data: packed `0xAARRGGBB` (little-endian) |
+
+Pixels with alpha = 0 are treated as transparent and skipped during drawing.
 
 ---
 
