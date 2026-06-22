@@ -4,8 +4,7 @@
 #include <stddef.h>
 
 #include "console.h"
-#include "stdio.h"
-#include "ff.h"
+#include "neon_fs.h"
 
 #define SHELL_MAX_ARGS 16
 #define SHELL_LINE_MAX 256
@@ -311,7 +310,7 @@ int shell_get_current_directory(
 
 int shell_set_current_directory(const char* input) {
     char path[SHELL_PATH_MAX];
-    DIR directory;
+    NeonFsDirectory directory;
     FRESULT result;
 
     if (input == NULL || input[0] == 0) {
@@ -322,17 +321,20 @@ int shell_set_current_directory(const char* input) {
         return -1;
     }
 
-    result = f_opendir(&directory, path);
+    result = open_directory(&directory, path);
 
     if (result != FR_OK) {
         return -1;
     }
 
-    f_closedir(&directory);
+    if (close_directory(&directory) != FR_OK) {
+        return -1;
+    }
 
     shell_copy(shell_cwd, sizeof(shell_cwd), path);
     return 0;
 }
+
 
 static int shell_path_entry_to_absolute(
     const char* entry,
@@ -463,30 +465,14 @@ static int shell_join_path(
 }
 
 static int shell_directory_exists(const char* path) {
-    FILINFO info;
-    FRESULT result;
-
-    if (!path || path[0] == 0) {
-        return 0;
-    }
-
-    result = f_stat(path, &info);
-
-    return result == FR_OK && (info.fattrib & AM_DIR) != 0;
+    return directory_exists(path);
 }
+
 
 static int shell_regular_file_exists(const char* path) {
-    FILINFO info;
-    FRESULT result;
-
-    if (!path || path[0] == 0) {
-        return 0;
-    }
-
-    result = f_stat(path, &info);
-
-    return result == FR_OK && (info.fattrib & AM_DIR) == 0;
+    return file_exists(path);
 }
+
 
 static void shell_trim_path_line(char* text) {
     int start = 0;
@@ -526,9 +512,99 @@ static void shell_trim_path_line(char* text) {
     text[end] = 0;
 }
 
+static int shell_read_line(
+    NeonFsFile* file,
+    char* output,
+    int output_size
+) {
+    int length = 0;
+
+    if (file == NULL || output == NULL || output_size <= 1) {
+        return -1;
+    }
+
+    output[0] = '\0';
+
+    for (;;) {
+        char character;
+        UINT read_count = 0;
+        FRESULT result;
+
+        result = neon_fs_file_read(
+            file,
+            &character,
+            1,
+            &read_count
+        );
+
+        if (result != FR_OK) {
+            return -1;
+        }
+
+        if (read_count == 0) {
+            return length > 0 ? 1 : 0;
+        }
+
+        if (length + 1 >= output_size) {
+            output[0] = '\0';
+            return -1;
+        }
+
+        output[length++] = character;
+        output[length] = '\0';
+
+        if (character == '\n') {
+            return 1;
+        }
+    }
+}
+
+
+static int shell_write_bytes(
+    NeonFsFile* file,
+    const void* data,
+    int size
+) {
+    UINT written = 0;
+    FRESULT result;
+
+    if (
+        file == NULL ||
+        size < 0 ||
+        (size > 0 && data == NULL)
+    ) {
+        return -1;
+    }
+
+    result = neon_fs_file_write(
+        file,
+        data,
+        (UINT)size,
+        &written
+    );
+
+    return result == FR_OK && written == (UINT)size ? 0 : -1;
+}
+
+
+static int shell_write_text(NeonFsFile* file, const char* text) {
+    if (text == NULL) {
+        return -1;
+    }
+
+    return shell_write_bytes(file, text, shell_str_len(text));
+}
+
+
+static int shell_write_char(NeonFsFile* file, char character) {
+    return shell_write_bytes(file, &character, 1);
+}
+
+
 static int shell_load_path_list(ShellPathList* list) {
-    FILE* file;
+    NeonFsFile file;
     char line[SHELL_PATH_MAX];
+    FRESULT result;
 
     if (!list) {
         return -1;
@@ -536,13 +612,28 @@ static int shell_load_path_list(ShellPathList* list) {
 
     list->count = 0;
 
-    file = fopen(SHELL_PATH_FILE, "r");
+    result = neon_fs_file_open(
+        &file,
+        SHELL_PATH_FILE,
+        NEON_FS_FILE_OPEN_READ
+    );
 
-    if (!file) {
+    if (result != FR_OK) {
         return -1;
     }
 
-    while (fgets(line, sizeof(line), file) != NULL) {
+    for (;;) {
+        int line_result = shell_read_line(&file, line, sizeof(line));
+
+        if (line_result == 0) {
+            break;
+        }
+
+        if (line_result < 0) {
+            (void)neon_fs_file_close(&file);
+            return -1;
+        }
+
         shell_trim_path_line(line);
 
         if (line[0] == 0 || line[0] == '#') {
@@ -550,7 +641,7 @@ static int shell_load_path_list(ShellPathList* list) {
         }
 
         if (list->count >= SHELL_PATH_MAX_ENTRIES) {
-            (void)fclose(file);
+            (void)neon_fs_file_close(&file);
             return -1;
         }
 
@@ -561,7 +652,7 @@ static int shell_load_path_list(ShellPathList* list) {
                 sizeof(list->absolute[list->count])
             ) != 0
         ) {
-            (void)fclose(file);
+            (void)neon_fs_file_close(&file);
             return -1;
         }
 
@@ -574,8 +665,9 @@ static int shell_load_path_list(ShellPathList* list) {
         list->count++;
     }
 
-    return fclose(file) == EOF ? -1 : 0;
+    return neon_fs_file_close(&file) == FR_OK ? 0 : -1;
 }
+
 
 static char shell_ascii_to_lower(char character) {
     if (character >= 'A' && character <= 'Z') {
@@ -710,9 +802,9 @@ static int shell_lookup_alias_application(
     char* output,
     int output_size
 ) {
-    FILE* file;
-    FILINFO info;
-    FRESULT stat_result;
+    NeonFsFile file;
+    NeonFsEntry info;
+    FRESULT result;
     char line[SHELL_LINE_MAX];
 
     if (
@@ -726,77 +818,91 @@ static int shell_lookup_alias_application(
 
     output[0] = 0;
 
-    stat_result = f_stat(SHELL_ALIAS_FILE, &info);
+    result = get_path_info(SHELL_ALIAS_FILE, &info);
 
-    if (stat_result == FR_NO_FILE || stat_result == FR_NO_PATH) {
+    if (result == FR_NO_FILE || result == FR_NO_PATH) {
         return -2;
     }
 
-    if (stat_result != FR_OK || (info.fattrib & AM_DIR) != 0) {
+    if (result != FR_OK || !file_exists(SHELL_ALIAS_FILE)) {
         return -1;
     }
 
-    file = fopen(SHELL_ALIAS_FILE, "r");
+    result = neon_fs_file_open(
+        &file,
+        SHELL_ALIAS_FILE,
+        NEON_FS_FILE_OPEN_READ
+    );
 
-    if (file == NULL) {
+    if (result != FR_OK) {
         return -1;
     }
 
-    while (fgets(line, sizeof(line), file) != NULL) {
-        int equal_index = -1;
-        int index;
-        char* alias_extension;
-        char* application;
+    for (;;) {
+        int line_result = shell_read_line(&file, line, sizeof(line));
 
-        shell_trim_path_line(line);
-
-        if (line[0] == 0 || line[0] == '#') {
-            continue;
+        if (line_result == 0) {
+            break;
         }
 
-        for (index = 0; line[index] != 0; index++) {
-            if (line[index] == '=') {
-                equal_index = index;
-                break;
-            }
+        if (line_result < 0) {
+            (void)neon_fs_file_close(&file);
+            return -1;
         }
 
-        if (equal_index < 0) {
-            continue;
-        }
+        {
+            int equal_index = -1;
+            int index;
+            char* alias_extension;
+            char* application;
 
-        line[equal_index] = 0;
-        alias_extension = line;
-        application = line + equal_index + 1;
+            shell_trim_path_line(line);
 
-        if (shell_normalize_alias_extension(alias_extension) != 0) {
-            continue;
-        }
-
-        shell_trim_path_line(application);
-
-        if (!shell_alias_application_is_valid(application)) {
-            continue;
-        }
-
-        if (shell_str_equal(alias_extension, extension)) {
-            shell_copy(output, output_size, application);
-
-            if (fclose(file) == EOF) {
-                output[0] = 0;
-                return -1;
+            if (line[0] == 0 || line[0] == '#') {
+                continue;
             }
 
-            return 1;
+            for (index = 0; line[index] != 0; index++) {
+                if (line[index] == '=') {
+                    equal_index = index;
+                    break;
+                }
+            }
+
+            if (equal_index < 0) {
+                continue;
+            }
+
+            line[equal_index] = 0;
+            alias_extension = line;
+            application = line + equal_index + 1;
+
+            if (shell_normalize_alias_extension(alias_extension) != 0) {
+                continue;
+            }
+
+            shell_trim_path_line(application);
+
+            if (!shell_alias_application_is_valid(application)) {
+                continue;
+            }
+
+            if (shell_str_equal(alias_extension, extension)) {
+                shell_copy(output, output_size, application);
+
+                if (neon_fs_file_close(&file) != FR_OK) {
+                    output[0] = 0;
+                    return -1;
+                }
+
+                return 1;
+            }
         }
     }
 
-    if (fclose(file) == EOF) {
-        return -1;
-    }
-
-    return 0;
+    return neon_fs_file_close(&file) == FR_OK ? 0 : -1;
 }
+
 
 static int shell_build_open_command(
     const char* application,
@@ -899,7 +1005,7 @@ static int shell_parse_alias_line_extension(
 }
 
 static int shell_write_raw_alias_line(
-    FILE* file,
+    NeonFsFile* file,
     const char* line
 ) {
     int length;
@@ -908,14 +1014,14 @@ static int shell_write_raw_alias_line(
         return -1;
     }
 
-    if (fputs(line, file) == EOF) {
+    if (shell_write_text(file, line) != 0) {
         return -1;
     }
 
     length = shell_str_len(line);
 
     if (length == 0 || line[length - 1] != '\n') {
-        if (fputc('\n', file) == EOF) {
+        if (shell_write_char(file, '\n') != 0) {
             return -1;
         }
     }
@@ -923,8 +1029,9 @@ static int shell_write_raw_alias_line(
     return 0;
 }
 
+
 static int shell_write_alias_mapping(
-    FILE* file,
+    NeonFsFile* file,
     const char* extension,
     const char* application
 ) {
@@ -937,16 +1044,17 @@ static int shell_write_alias_mapping(
     }
 
     if (
-        fputs(extension, file) == EOF ||
-        fputc('=', file) == EOF ||
-        fputs(application, file) == EOF ||
-        fputc('\n', file) == EOF
+        shell_write_text(file, extension) != 0 ||
+        shell_write_char(file, '=') != 0 ||
+        shell_write_text(file, application) != 0 ||
+        shell_write_char(file, '\n') != 0
     ) {
         return -1;
     }
 
     return 0;
 }
+
 
 static int shell_update_alias_file(
     const char* extension,
@@ -955,9 +1063,9 @@ static int shell_update_alias_file(
     int* out_found,
     int* out_file_existed
 ) {
-    FILE* source = NULL;
-    FILE* temporary = NULL;
-    FILINFO info;
+    NeonFsFile source;
+    NeonFsFile temporary;
+    NeonFsEntry info;
     FRESULT stat_result;
     FRESULT result;
     char raw_line[SHELL_LINE_MAX];
@@ -966,6 +1074,8 @@ static int shell_update_alias_file(
     int found = 0;
     int mapping_written = 0;
     int file_existed = 0;
+    int source_opened = 0;
+    int temporary_opened = 0;
     int failed = 0;
 
     if (
@@ -984,19 +1094,24 @@ static int shell_update_alias_file(
         *out_file_existed = 0;
     }
 
-    stat_result = f_stat(SHELL_ALIAS_FILE, &info);
+    stat_result = get_path_info(SHELL_ALIAS_FILE, &info);
 
     if (stat_result == FR_OK) {
-        if ((info.fattrib & AM_DIR) != 0) {
+        if (!file_exists(SHELL_ALIAS_FILE)) {
             return -1;
         }
 
-        source = fopen(SHELL_ALIAS_FILE, "r");
+        result = neon_fs_file_open(
+            &source,
+            SHELL_ALIAS_FILE,
+            NEON_FS_FILE_OPEN_READ
+        );
 
-        if (source == NULL) {
+        if (result != FR_OK) {
             return -1;
         }
 
+        source_opened = 1;
         file_existed = 1;
     } else if (
         stat_result != FR_NO_FILE &&
@@ -1013,75 +1128,98 @@ static int shell_update_alias_file(
         return 0;
     }
 
-    result = f_unlink(SHELL_ALIAS_TEMP_FILE);
+    result = delete_path(SHELL_ALIAS_TEMP_FILE);
 
     if (
         result != FR_OK &&
         result != FR_NO_FILE &&
         result != FR_NO_PATH
     ) {
-        if (source != NULL) {
-            (void)fclose(source);
+        if (source_opened) {
+            (void)neon_fs_file_close(&source);
         }
 
         return -1;
     }
 
-    temporary = fopen(SHELL_ALIAS_TEMP_FILE, "w");
+    result = neon_fs_file_open(
+        &temporary,
+        SHELL_ALIAS_TEMP_FILE,
+        NEON_FS_FILE_OPEN_WRITE_TRUNCATE
+    );
 
-    if (temporary == NULL) {
-        if (source != NULL) {
-            (void)fclose(source);
+    if (result != FR_OK) {
+        if (source_opened) {
+            (void)neon_fs_file_close(&source);
         }
 
         return -1;
     }
 
-    while (source != NULL && fgets(raw_line, sizeof(raw_line), source) != NULL) {
-        int parse_result;
+    temporary_opened = 1;
 
-        shell_copy(parsed_line, sizeof(parsed_line), raw_line);
-
-        parse_result = shell_parse_alias_line_extension(
-            parsed_line,
-            parsed_extension,
-            sizeof(parsed_extension)
+    while (source_opened) {
+        int line_result = shell_read_line(
+            &source,
+            raw_line,
+            sizeof(raw_line)
         );
 
-        if (
-            parse_result == 1 &&
-            shell_str_equal(parsed_extension, extension)
-        ) {
-            found = 1;
-
-            if (!remove_only && !mapping_written) {
-                if (
-                    shell_write_alias_mapping(
-                        temporary,
-                        extension,
-                        application
-                    ) != 0
-                ) {
-                    failed = 1;
-                    break;
-                }
-
-                mapping_written = 1;
-            }
-
-            continue;
+        if (line_result == 0) {
+            break;
         }
 
-        if (shell_write_raw_alias_line(temporary, raw_line) != 0) {
+        if (line_result < 0) {
             failed = 1;
             break;
+        }
+
+        {
+            int parse_result;
+
+            shell_copy(parsed_line, sizeof(parsed_line), raw_line);
+
+            parse_result = shell_parse_alias_line_extension(
+                parsed_line,
+                parsed_extension,
+                sizeof(parsed_extension)
+            );
+
+            if (
+                parse_result == 1 &&
+                shell_str_equal(parsed_extension, extension)
+            ) {
+                found = 1;
+
+                if (!remove_only && !mapping_written) {
+                    if (
+                        shell_write_alias_mapping(
+                            &temporary,
+                            extension,
+                            application
+                        ) != 0
+                    ) {
+                        failed = 1;
+                        break;
+                    }
+
+                    mapping_written = 1;
+                }
+
+                continue;
+            }
+
+            if (shell_write_raw_alias_line(&temporary, raw_line) != 0) {
+                failed = 1;
+                break;
+            }
         }
     }
 
     if (!failed && !remove_only && !mapping_written) {
         if (
             shell_write_alias_mapping(
-                temporary,
+                &temporary,
                 extension,
                 application
             ) != 0
@@ -1090,32 +1228,32 @@ static int shell_update_alias_file(
         }
     }
 
-    if (source != NULL && fclose(source) == EOF) {
+    if (source_opened && neon_fs_file_close(&source) != FR_OK) {
         failed = 1;
     }
 
-    if (fclose(temporary) == EOF) {
+    if (temporary_opened && neon_fs_file_close(&temporary) != FR_OK) {
         failed = 1;
     }
 
     if (failed) {
-        (void)f_unlink(SHELL_ALIAS_TEMP_FILE);
+        (void)delete_path(SHELL_ALIAS_TEMP_FILE);
         return -1;
     }
 
     if (file_existed) {
-        result = f_unlink(SHELL_ALIAS_FILE);
+        result = delete_path(SHELL_ALIAS_FILE);
 
         if (result != FR_OK) {
-            (void)f_unlink(SHELL_ALIAS_TEMP_FILE);
+            (void)delete_path(SHELL_ALIAS_TEMP_FILE);
             return -1;
         }
     }
 
-    result = f_rename(SHELL_ALIAS_TEMP_FILE, SHELL_ALIAS_FILE);
+    result = rename_path(SHELL_ALIAS_TEMP_FILE, SHELL_ALIAS_FILE);
 
     if (result != FR_OK) {
-        (void)f_unlink(SHELL_ALIAS_TEMP_FILE);
+        (void)delete_path(SHELL_ALIAS_TEMP_FILE);
         return -1;
     }
 
@@ -1126,31 +1264,38 @@ static int shell_update_alias_file(
     return 0;
 }
 
+
 static int shell_write_path_list(const ShellPathList* list) {
-    FILE* file;
+    NeonFsFile file;
+    FRESULT result;
 
     if (!list) {
         return -1;
     }
 
-    file = fopen(SHELL_PATH_FILE, "w");
+    result = neon_fs_file_open(
+        &file,
+        SHELL_PATH_FILE,
+        NEON_FS_FILE_OPEN_WRITE_TRUNCATE
+    );
 
-    if (!file) {
+    if (result != FR_OK) {
         return -1;
     }
 
     for (int index = 0; index < list->count; index++) {
         if (
-            fputs(list->raw[index], file) == EOF ||
-            fputc('\n', file) == EOF
+            shell_write_text(&file, list->raw[index]) != 0 ||
+            shell_write_char(&file, '\n') != 0
         ) {
-            (void)fclose(file);
+            (void)neon_fs_file_close(&file);
             return -1;
         }
     }
 
-    return fclose(file) == EOF ? -1 : 0;
+    return neon_fs_file_close(&file) == FR_OK ? 0 : -1;
 }
+
 
 static int shell_name_has_path_syntax(const char* name) {
     int i = 0;
@@ -1421,8 +1566,8 @@ static int cmd_pwd(int argc, char** argv) {
 
 static int cmd_cd(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
-    DIR dir;
-    FRESULT res;
+    NeonFsDirectory directory;
+    FRESULT result;
 
     if (argc < 2) {
         shell_copy(shell_cwd, sizeof(shell_cwd), "0:/");
@@ -1439,24 +1584,28 @@ static int cmd_cd(int argc, char** argv) {
         return -1;
     }
 
-    res = f_opendir(&dir, path);
+    result = open_directory(&directory, path);
 
-    if (res != FR_OK) {
+    if (result != FR_OK) {
         shell_print_error("directory not found");
         return -1;
     }
 
-    f_closedir(&dir);
+    if (close_directory(&directory) != FR_OK) {
+        shell_print_error("cannot close directory");
+        return -1;
+    }
+
     shell_copy(shell_cwd, sizeof(shell_cwd), path);
 
     return 0;
 }
 
+
 static int cmd_ls(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
-    DIR dir;
-    FILINFO info;
-    FRESULT res;
+    NeonFsDirectory directory;
+    FRESULT result;
 
     if (argc >= 2) {
         if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
@@ -1467,34 +1616,42 @@ static int cmd_ls(int argc, char** argv) {
         shell_copy(path, sizeof(path), shell_cwd);
     }
 
-    res = f_opendir(&dir, path);
+    result = open_directory(&directory, path);
 
-    if (res != FR_OK) {
+    if (result != FR_OK) {
         shell_print_error("cannot open directory");
         return -1;
     }
 
-    while (1) {
-        res = f_readdir(&dir, &info);
+    for (;;) {
+        NeonFsEntry entry;
+        int end = 0;
 
-        if (res != FR_OK) {
-            f_closedir(&dir);
+        result = read_directory(&directory, &entry, &end);
+
+        if (result != FR_OK) {
+            (void)close_directory(&directory);
             shell_print_error("cannot read directory");
             return -1;
         }
 
-        if (info.fname[0] == 0) {
+        if (end) {
             break;
         }
 
-        console_write((info.fattrib & AM_DIR) ? "[D] " : "    ");
-        console_write(info.fname);
+        console_write((entry.attributes & AM_DIR) ? "[D] " : "    ");
+        console_write(entry.name);
         console_write("\n");
     }
 
-    f_closedir(&dir);
+    if (close_directory(&directory) != FR_OK) {
+        shell_print_error("cannot close directory");
+        return -1;
+    }
+
     return 0;
 }
+
 
 static int cmd_mkdir(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
@@ -1509,7 +1666,7 @@ static int cmd_mkdir(int argc, char** argv) {
         return -1;
     }
 
-    if (f_mkdir(path) != FR_OK) {
+    if (create_directory(path) != FR_OK) {
         shell_print_error("mkdir failed");
         return -1;
     }
@@ -1517,11 +1674,12 @@ static int cmd_mkdir(int argc, char** argv) {
     return 0;
 }
 
+
 static int cmd_cat(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
-    FILE* f;
+    NeonFsFile file;
     char buffer[129];
-    size_t n;
+    FRESULT result;
 
     if (argc < 2) {
         shell_print_error("usage: cat <file>");
@@ -1533,33 +1691,55 @@ static int cmd_cat(int argc, char** argv) {
         return -1;
     }
 
-    f = fopen(path, "r");
+    result = neon_fs_file_open(
+        &file,
+        path,
+        NEON_FS_FILE_OPEN_READ
+    );
 
-    if (!f) {
+    if (result != FR_OK) {
         shell_print_error("cannot open file");
         return -1;
     }
 
-    while (1) {
-        n = fread(buffer, 1, sizeof(buffer) - 1, f);
+    for (;;) {
+        UINT read_count = 0;
 
-        if (n == 0) {
+        result = neon_fs_file_read(
+            &file,
+            buffer,
+            (UINT)(sizeof(buffer) - 1U),
+            &read_count
+        );
+
+        if (result != FR_OK) {
+            (void)neon_fs_file_close(&file);
+            shell_print_error("cannot read file");
+            return -1;
+        }
+
+        if (read_count == 0) {
             break;
         }
 
-        buffer[n] = 0;
+        buffer[read_count] = 0;
         console_write(buffer);
     }
 
-    fclose(f);
+    if (neon_fs_file_close(&file) != FR_OK) {
+        shell_print_error("cannot close file");
+        return -1;
+    }
+
     console_write("\n");
 
     return 0;
 }
 
+
 static int cmd_write(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
-    FILE* f;
+    FRESULT result;
 
     if (argc < 3) {
         shell_print_error("usage: write <file> <text>");
@@ -1571,23 +1751,28 @@ static int cmd_write(int argc, char** argv) {
         return -1;
     }
 
-    f = fopen(path, "w");
+    result = write_file(
+        path,
+        argv[2],
+        (UINT)shell_str_len(argv[2])
+    );
 
-    if (!f) {
-        shell_print_error("cannot open file");
-        return -1;
+    if (result == FR_OK) {
+        result = append_file(path, "\n", 1);
     }
 
-    fwrite(argv[2], 1, shell_str_len(argv[2]), f);
-    fwrite("\n", 1, 1, f);
-    fclose(f);
+    if (result != FR_OK) {
+        shell_print_error("cannot write file");
+        return -1;
+    }
 
     return 0;
 }
 
+
 static int cmd_append(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
-    FILE* f;
+    FRESULT result;
 
     if (argc < 3) {
         shell_print_error("usage: append <file> <text>");
@@ -1599,19 +1784,24 @@ static int cmd_append(int argc, char** argv) {
         return -1;
     }
 
-    f = fopen(path, "a");
+    result = append_file(
+        path,
+        argv[2],
+        (UINT)shell_str_len(argv[2])
+    );
 
-    if (!f) {
-        shell_print_error("cannot open file");
+    if (result == FR_OK) {
+        result = append_file(path, "\n", 1);
+    }
+
+    if (result != FR_OK) {
+        shell_print_error("cannot write file");
         return -1;
     }
 
-    fwrite(argv[2], 1, shell_str_len(argv[2]), f);
-    fwrite("\n", 1, 1, f);
-    fclose(f);
-
     return 0;
 }
+
 
 static int cmd_rm(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
@@ -1626,13 +1816,14 @@ static int cmd_rm(int argc, char** argv) {
         return -1;
     }
 
-    if (remove(path) != 0) {
+    if (delete_path(path) != FR_OK) {
         shell_print_error("remove failed");
         return -1;
     }
 
     return 0;
 }
+
 
 static int cmd_mv(int argc, char** argv) {
     char old_path[SHELL_PATH_MAX];
@@ -1653,13 +1844,14 @@ static int cmd_mv(int argc, char** argv) {
         return -1;
     }
 
-    if (rename(old_path, new_path) != 0) {
+    if (rename_path(old_path, new_path) != FR_OK) {
         shell_print_error("rename failed");
         return -1;
     }
 
     return 0;
 }
+
 
 static int cmd_echo(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
@@ -2052,7 +2244,8 @@ static void shell_trim_script_line(char* text) {
 int shell_run_script(const char* input_path) {
     char path[SHELL_PATH_MAX];
     char line[SHELL_LINE_MAX];
-    FILE* file;
+    NeonFsFile file;
+    FRESULT result;
     int script_status = 0;
 
     if (shell_script_depth >= SHELL_SCRIPT_MAX_DEPTH) {
@@ -2065,40 +2258,65 @@ int shell_run_script(const char* input_path) {
         return -1;
     }
 
-    file = fopen(path, "r");
+    result = neon_fs_file_open(
+        &file,
+        path,
+        NEON_FS_FILE_OPEN_READ
+    );
 
-    if (!file) {
+    if (result != FR_OK) {
         shell_print_error("cannot open script");
         return -1;
     }
 
     shell_script_depth++;
 
-    while (fgets(line, sizeof(line), file) != NULL) {
-        int status;
+    for (;;) {
+        int line_result = shell_read_line(&file, line, sizeof(line));
 
-        shell_trim_script_line(line);
-
-        if (line[0] == 0 || line[0] == '#') {
-            continue;
+        if (line_result == 0) {
+            break;
         }
 
-        console_write("> ");
-        console_write(line);
-        console_write("\n");
+        if (line_result < 0) {
+            (void)neon_fs_file_close(&file);
+            shell_script_depth--;
+            shell_print_error("cannot read script");
+            return -1;
+        }
 
-        status = shell_commands_execute(line);
+        {
+            int status;
 
-        if (status != 0) {
-            script_status = status;
+            shell_trim_script_line(line);
+
+            if (line[0] == 0 || line[0] == '#') {
+                continue;
+            }
+
+            console_write("> ");
+            console_write(line);
+            console_write("\n");
+
+            status = shell_commands_execute(line);
+
+            if (status != 0) {
+                script_status = status;
+            }
         }
     }
 
-    fclose(file);
+    if (neon_fs_file_close(&file) != FR_OK) {
+        shell_script_depth--;
+        shell_print_error("cannot close script");
+        return -1;
+    }
+
     shell_script_depth--;
 
     return script_status;
 }
+
 
 static int cmd_sh(int argc, char** argv) {
     if (argc != 2) {

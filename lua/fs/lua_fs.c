@@ -1,15 +1,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "ff.h"
 #include "lua_fs.h"
+#include "neon_fs.h"
 
 #include "lauxlib.h"
 
 
-#define LUA_FS_PATH_CAPACITY 512
-#define LUA_FS_COPY_BUFFER_SIZE 512
-#define LUA_FS_MAX_RECURSION 24
+#define LUA_FS_PATH_CAPACITY NEON_FS_PATH_MAX
 
 
 static size_t lua_fs_strlen(const char* text) {
@@ -27,9 +25,10 @@ static size_t lua_fs_strlen(const char* text) {
 }
 
 
-static int lua_fs_is_separator(char c) {
-    return c == '/' || c == '\\';
+static int lua_fs_is_separator(char character) {
+    return character == '/' || character == '\\';
 }
+
 
 static int lua_fs_is_dot_entry(const char* name) {
     if (name == NULL) {
@@ -145,6 +144,7 @@ static int lua_fs_is_root_path(const char* path) {
 static int lua_fs_paths_equal(const char* left, const char* right) {
     size_t left_length;
     size_t right_length;
+    size_t index;
 
     if (left == NULL || right == NULL) {
         return 0;
@@ -165,7 +165,7 @@ static int lua_fs_paths_equal(const char* left, const char* right) {
         return 0;
     }
 
-    for (size_t index = 0; index < left_length; index++) {
+    for (index = 0; index < left_length; index++) {
         char a = left[index];
         char b = right[index];
 
@@ -185,9 +185,11 @@ static int lua_fs_paths_equal(const char* left, const char* right) {
     return 1;
 }
 
+
 static int lua_fs_path_is_child_of(const char* parent, const char* child) {
     size_t parent_length;
     size_t child_length;
+    size_t index;
 
     if (parent == NULL || child == NULL) {
         return 0;
@@ -217,7 +219,7 @@ static int lua_fs_path_is_child_of(const char* parent, const char* child) {
         return 0;
     }
 
-    for (size_t index = 0; index < parent_length; index++) {
+    for (index = 0; index < parent_length; index++) {
         char a = parent[index];
         char b = child[index];
 
@@ -238,65 +240,22 @@ static int lua_fs_path_is_child_of(const char* parent, const char* child) {
 }
 
 
-static int lua_fs_join_path(
-    char* output,
-    size_t output_capacity,
-    const char* parent,
-    const char* name
+static void lua_fs_push_attributes(
+    lua_State* state,
+    const NeonFsEntry* info
 ) {
-    size_t parent_length;
-    size_t name_length;
-    size_t position;
-    int parent_needs_separator;
-
-    if (output == NULL || output_capacity == 0 || parent == NULL || name == NULL) {
-        return 0;
-    }
-
-    parent_length = lua_fs_strlen(parent);
-    name_length = lua_fs_strlen(name);
-
-    while (name_length > 0 && lua_fs_is_separator(name[0])) {
-        name++;
-        name_length--;
-    }
-
-    parent_needs_separator =
-        parent_length > 0 &&
-        !lua_fs_is_separator(parent[parent_length - 1]) &&
-        parent[parent_length - 1] != ':';
-
-    position = 0;
-
-    if (parent_length + (parent_needs_separator ? 1U : 0U) + name_length + 1U > output_capacity) {
-        return 0;
-    }
-
-    for (size_t index = 0; index < parent_length; index++) {
-        output[position++] = parent[index] == '\\' ? '/' : parent[index];
-    }
-
-    if (parent_needs_separator) {
-        output[position++] = '/';
-    }
-
-    for (size_t index = 0; index < name_length; index++) {
-        output[position++] = name[index] == '\\' ? '/' : name[index];
-    }
-
-    output[position] = '\0';
-    return 1;
-}
-
-
-static void lua_fs_push_attributes(lua_State* state, const FILINFO* info) {
     int is_directory;
 
-    is_directory = info != NULL && (info->fattrib & AM_DIR) != 0;
+    is_directory =
+        info != NULL &&
+        (info->attributes & AM_DIR) != 0;
 
     lua_newtable(state);
 
-    lua_pushinteger(state, (lua_Integer)(info == NULL ? 0 : info->fsize));
+    lua_pushinteger(
+        state,
+        (lua_Integer)(info == NULL ? 0 : info->size)
+    );
     lua_setfield(state, -2, "size");
 
     lua_pushboolean(state, is_directory);
@@ -305,30 +264,42 @@ static void lua_fs_push_attributes(lua_State* state, const FILINFO* info) {
     lua_pushboolean(state, is_directory);
     lua_setfield(state, -2, "isDir");
 
-    lua_pushboolean(state, info != NULL && (info->fattrib & AM_RDO) != 0);
+    lua_pushboolean(
+        state,
+        info != NULL && (info->attributes & AM_RDO) != 0
+    );
     lua_setfield(state, -2, "readonly");
 
-    lua_pushboolean(state, info != NULL && (info->fattrib & AM_HID) != 0);
+    lua_pushboolean(
+        state,
+        info != NULL && (info->attributes & AM_HID) != 0
+    );
     lua_setfield(state, -2, "hidden");
 
-    lua_pushboolean(state, info != NULL && (info->fattrib & AM_SYS) != 0);
+    lua_pushboolean(
+        state,
+        info != NULL && (info->attributes & AM_SYS) != 0
+    );
     lua_setfield(state, -2, "system");
 
-    lua_pushboolean(state, info != NULL && (info->fattrib & AM_ARC) != 0);
+    lua_pushboolean(
+        state,
+        info != NULL && (info->attributes & AM_ARC) != 0
+    );
     lua_setfield(state, -2, "archive");
 }
 
 
 static int lua_fs_list(lua_State* state) {
     const char* path;
-    DIR directory;
-    FILINFO info;
+    NeonFsDirectory directory;
+    NeonFsEntry info;
     FRESULT result;
     int index;
 
     path = lua_fs_check_path(state, 1);
 
-    result = f_opendir(&directory, path);
+    result = open_directory(&directory, path);
     if (result != FR_OK) {
         return lua_fs_raise(state, "list", result);
     }
@@ -337,27 +308,29 @@ static int lua_fs_list(lua_State* state) {
     index = 1;
 
     for (;;) {
-        result = f_readdir(&directory, &info);
+        int end = 0;
+
+        result = read_directory(&directory, &info, &end);
 
         if (result != FR_OK) {
-            (void)f_closedir(&directory);
+            (void)close_directory(&directory);
             return lua_fs_raise(state, "list", result);
         }
 
-        if (info.fname[0] == '\0') {
+        if (end) {
             break;
         }
 
-        if (lua_fs_is_dot_entry(info.fname)) {
+        if (lua_fs_is_dot_entry(info.name)) {
             continue;
         }
 
-        lua_pushstring(state, info.fname);
+        lua_pushstring(state, info.name);
         lua_rawseti(state, -2, index);
         index++;
     }
 
-    result = f_closedir(&directory);
+    result = close_directory(&directory);
     if (result != FR_OK) {
         return lua_fs_raise(state, "list", result);
     }
@@ -365,16 +338,17 @@ static int lua_fs_list(lua_State* state) {
     return 1;
 }
 
+
 static int lua_fs_list_info(lua_State* state) {
     const char* path;
-    DIR directory;
-    FILINFO info;
+    NeonFsDirectory directory;
+    NeonFsEntry info;
     FRESULT result;
     int index;
 
     path = lua_fs_check_path(state, 1);
 
-    result = f_opendir(&directory, path);
+    result = open_directory(&directory, path);
     if (result != FR_OK) {
         return lua_fs_raise(state, "listInfo", result);
     }
@@ -383,29 +357,31 @@ static int lua_fs_list_info(lua_State* state) {
     index = 1;
 
     for (;;) {
-        result = f_readdir(&directory, &info);
+        int end = 0;
+
+        result = read_directory(&directory, &info, &end);
 
         if (result != FR_OK) {
-            (void)f_closedir(&directory);
+            (void)close_directory(&directory);
             return lua_fs_raise(state, "listInfo", result);
         }
 
-        if (info.fname[0] == '\0') {
+        if (end) {
             break;
         }
 
-        if (lua_fs_is_dot_entry(info.fname)) {
+        if (lua_fs_is_dot_entry(info.name)) {
             continue;
         }
 
         lua_fs_push_attributes(state, &info);
-        lua_pushstring(state, info.fname);
+        lua_pushstring(state, info.name);
         lua_setfield(state, -2, "name");
         lua_rawseti(state, -2, index);
         index++;
     }
 
-    result = f_closedir(&directory);
+    result = close_directory(&directory);
     if (result != FR_OK) {
         return lua_fs_raise(state, "listInfo", result);
     }
@@ -416,48 +392,33 @@ static int lua_fs_list_info(lua_State* state) {
 
 static int lua_fs_exists(lua_State* state) {
     const char* path;
-    FILINFO info;
-    FRESULT result;
 
     path = lua_fs_check_path(state, 1);
 
-    if (lua_fs_is_root_path(path)) {
-        lua_pushboolean(state, 1);
-        return 1;
-    }
-
-    result = f_stat(path, &info);
-    lua_pushboolean(state, result == FR_OK);
+    lua_pushboolean(
+        state,
+        lua_fs_is_root_path(path) || path_exists(path)
+    );
     return 1;
 }
 
 
 static int lua_fs_is_dir(lua_State* state) {
     const char* path;
-    FILINFO info;
-    FRESULT result;
 
     path = lua_fs_check_path(state, 1);
 
-    if (lua_fs_is_root_path(path)) {
-        lua_pushboolean(state, 1);
-        return 1;
-    }
-
-    result = f_stat(path, &info);
-
     lua_pushboolean(
         state,
-        result == FR_OK && (info.fattrib & AM_DIR) != 0
+        lua_fs_is_root_path(path) || directory_exists(path)
     );
-
     return 1;
 }
 
 
 static int lua_fs_get_size(lua_State* state) {
     const char* path;
-    FILINFO info;
+    NeonFsEntry info;
     FRESULT result;
 
     path = lua_fs_check_path(state, 1);
@@ -467,19 +428,19 @@ static int lua_fs_get_size(lua_State* state) {
         return 1;
     }
 
-    result = f_stat(path, &info);
+    result = get_path_info(path, &info);
     if (result != FR_OK) {
         return lua_fs_raise(state, "getSize", result);
     }
 
-    lua_pushinteger(state, (lua_Integer)info.fsize);
+    lua_pushinteger(state, (lua_Integer)info.size);
     return 1;
 }
 
 
 static int lua_fs_attributes(lua_State* state) {
     const char* path;
-    FILINFO info;
+    NeonFsEntry info;
     FRESULT result;
 
     path = lua_fs_check_path(state, 1);
@@ -493,7 +454,7 @@ static int lua_fs_attributes(lua_State* state) {
         return 1;
     }
 
-    result = f_stat(path, &info);
+    result = get_path_info(path, &info);
     if (result != FR_OK) {
         return lua_fs_raise(state, "attributes", result);
     }
@@ -505,7 +466,7 @@ static int lua_fs_attributes(lua_State* state) {
 
 static int lua_fs_is_read_only(lua_State* state) {
     const char* path;
-    FILINFO info;
+    NeonFsEntry info;
     FRESULT result;
 
     path = lua_fs_check_path(state, 1);
@@ -515,247 +476,13 @@ static int lua_fs_is_read_only(lua_State* state) {
         return 1;
     }
 
-    result = f_stat(path, &info);
+    result = get_path_info(path, &info);
     if (result != FR_OK) {
         return lua_fs_raise(state, "isReadOnly", result);
     }
 
-    lua_pushboolean(state, (info.fattrib & AM_RDO) != 0);
+    lua_pushboolean(state, (info.attributes & AM_RDO) != 0);
     return 1;
-}
-
-
-static FRESULT lua_fs_copy_file(const char* source_path, const char* destination_path) {
-    FIL source;
-    FIL destination;
-    FRESULT result;
-    UINT bytes_read;
-    UINT bytes_written;
-    BYTE buffer[LUA_FS_COPY_BUFFER_SIZE];
-    int source_open = 0;
-    int destination_open = 0;
-
-    result = f_open(&source, source_path, FA_READ | FA_OPEN_EXISTING);
-    if (result != FR_OK) {
-        return result;
-    }
-
-    source_open = 1;
-
-    result = f_open(&destination, destination_path, FA_WRITE | FA_CREATE_NEW);
-    if (result != FR_OK) {
-        (void)f_close(&source);
-        return result;
-    }
-
-    destination_open = 1;
-
-    for (;;) {
-        bytes_read = 0;
-        result = f_read(&source, buffer, (UINT)sizeof(buffer), &bytes_read);
-        if (result != FR_OK) {
-            break;
-        }
-
-        if (bytes_read == 0) {
-            break;
-        }
-
-        bytes_written = 0;
-        result = f_write(&destination, buffer, bytes_read, &bytes_written);
-        if (result != FR_OK) {
-            break;
-        }
-
-        if (bytes_written != bytes_read) {
-            result = FR_DISK_ERR;
-            break;
-        }
-    }
-
-    if (destination_open) {
-        FRESULT close_result = f_close(&destination);
-        if (result == FR_OK && close_result != FR_OK) {
-            result = close_result;
-        }
-    }
-
-    if (source_open) {
-        FRESULT close_result = f_close(&source);
-        if (result == FR_OK && close_result != FR_OK) {
-            result = close_result;
-        }
-    }
-
-    return result;
-}
-
-
-static FRESULT lua_fs_copy_tree(
-    const char* source_path,
-    const char* destination_path,
-    int depth
-) {
-    FILINFO info;
-    FRESULT result;
-
-    if (depth > LUA_FS_MAX_RECURSION) {
-        return FR_NOT_ENOUGH_CORE;
-    }
-
-    result = f_stat(source_path, &info);
-    if (result != FR_OK) {
-        return result;
-    }
-
-    if ((info.fattrib & AM_DIR) == 0) {
-        return lua_fs_copy_file(source_path, destination_path);
-    }
-
-    result = f_mkdir(destination_path);
-    if (result != FR_OK) {
-        return result;
-    }
-
-    {
-        DIR directory;
-        FILINFO child_info;
-
-        result = f_opendir(&directory, source_path);
-        if (result != FR_OK) {
-            (void)f_unlink(destination_path);
-            return result;
-        }
-
-        for (;;) {
-            char child_source[LUA_FS_PATH_CAPACITY];
-            char child_destination[LUA_FS_PATH_CAPACITY];
-
-            result = f_readdir(&directory, &child_info);
-            if (result != FR_OK) {
-                break;
-            }
-
-            if (child_info.fname[0] == '\0') {
-                break;
-            }
-
-            if (lua_fs_is_dot_entry(child_info.fname)) {
-                continue;
-            }
-
-            if (
-                !lua_fs_join_path(
-                    child_source,
-                    sizeof(child_source),
-                    source_path,
-                    child_info.fname
-                ) ||
-                !lua_fs_join_path(
-                    child_destination,
-                    sizeof(child_destination),
-                    destination_path,
-                    child_info.fname
-                )
-            ) {
-                result = FR_INVALID_NAME;
-                break;
-            }
-
-            result = lua_fs_copy_tree(
-                child_source,
-                child_destination,
-                depth + 1
-            );
-
-            if (result != FR_OK) {
-                break;
-            }
-        }
-
-        {
-            FRESULT close_result = f_closedir(&directory);
-            if (result == FR_OK && close_result != FR_OK) {
-                result = close_result;
-            }
-        }
-    }
-
-    return result;
-}
-
-
-static FRESULT lua_fs_delete_tree(const char* path, int depth) {
-    FILINFO info;
-    FRESULT result;
-
-    if (depth > LUA_FS_MAX_RECURSION) {
-        return FR_NOT_ENOUGH_CORE;
-    }
-
-    result = f_stat(path, &info);
-    if (result != FR_OK) {
-        return result;
-    }
-
-    if ((info.fattrib & AM_DIR) == 0) {
-        return f_unlink(path);
-    }
-
-    {
-        DIR directory;
-        FILINFO child_info;
-
-        result = f_opendir(&directory, path);
-        if (result != FR_OK) {
-            return result;
-        }
-
-        for (;;) {
-            char child_path[LUA_FS_PATH_CAPACITY];
-
-            result = f_readdir(&directory, &child_info);
-            if (result != FR_OK) {
-                break;
-            }
-
-            if (child_info.fname[0] == '\0') {
-                break;
-            }
-
-            if (lua_fs_is_dot_entry(child_info.fname)) {
-                continue;
-            }
-
-            if (!lua_fs_join_path(
-                child_path,
-                sizeof(child_path),
-                path,
-                child_info.fname
-            )) {
-                result = FR_INVALID_NAME;
-                break;
-            }
-
-            result = lua_fs_delete_tree(child_path, depth + 1);
-            if (result != FR_OK) {
-                break;
-            }
-        }
-
-        {
-            FRESULT close_result = f_closedir(&directory);
-            if (result == FR_OK && close_result != FR_OK) {
-                result = close_result;
-            }
-        }
-    }
-
-    if (result != FR_OK) {
-        return result;
-    }
-
-    return f_unlink(path);
 }
 
 
@@ -765,7 +492,7 @@ static int lua_fs_make_dir(lua_State* state) {
 
     path = lua_fs_check_path(state, 1);
 
-    result = f_mkdir(path);
+    result = create_directory(path);
     if (result != FR_OK) {
         return lua_fs_raise(state, "makeDir", result);
     }
@@ -785,7 +512,7 @@ static int lua_fs_delete(lua_State* state) {
         return luaL_error(state, "fs.delete refuses to delete a volume root");
     }
 
-    result = lua_fs_delete_tree(path, 0);
+    result = delete_tree(path);
     if (result != FR_OK) {
         return lua_fs_raise(state, "delete", result);
     }
@@ -808,10 +535,13 @@ static int lua_fs_copy(lua_State* state) {
     }
 
     if (lua_fs_path_is_child_of(source_path, destination_path)) {
-        return luaL_error(state, "fs.copy destination must not be inside the source directory");
+        return luaL_error(
+            state,
+            "fs.copy destination must not be inside the source directory"
+        );
     }
 
-    result = lua_fs_copy_tree(source_path, destination_path, 0);
+    result = copy_path(source_path, destination_path);
     if (result != FR_OK) {
         return lua_fs_raise(state, "copy", result);
     }
@@ -838,10 +568,13 @@ static int lua_fs_move(lua_State* state) {
     }
 
     if (lua_fs_path_is_child_of(source_path, destination_path)) {
-        return luaL_error(state, "fs.move destination must not be inside the source directory");
+        return luaL_error(
+            state,
+            "fs.move destination must not be inside the source directory"
+        );
     }
 
-    result = f_rename(source_path, destination_path);
+    result = rename_path(source_path, destination_path);
     if (result != FR_OK) {
         return lua_fs_raise(state, "move", result);
     }
@@ -872,7 +605,11 @@ static int lua_fs_get_name(lua_State* state) {
     end = length;
     start = end;
 
-    while (start > 0 && !lua_fs_is_separator(path[start - 1]) && path[start - 1] != ':') {
+    while (
+        start > 0 &&
+        !lua_fs_is_separator(path[start - 1]) &&
+        path[start - 1] != ':'
+    ) {
         start--;
     }
 
@@ -934,21 +671,27 @@ static int lua_fs_combine(lua_State* state) {
     int argument_count;
     char result[LUA_FS_PATH_CAPACITY];
     size_t result_length;
+    int argument_index;
 
     argument_count = lua_gettop(state);
     result[0] = '\0';
     result_length = 0;
 
-    for (int argument_index = 1; argument_index <= argument_count; argument_index++) {
+    for (argument_index = 1; argument_index <= argument_count; argument_index++) {
         const char* part;
         size_t part_length;
         size_t part_start;
         int is_absolute_drive_path;
+        size_t index;
 
         part = luaL_checklstring(state, argument_index, &part_length);
 
         if (lua_fs_has_embedded_nul(part, part_length)) {
-            return luaL_argerror(state, argument_index, "path must not contain a NUL byte");
+            return luaL_argerror(
+                state,
+                argument_index,
+                "path must not contain a NUL byte"
+            );
         }
 
         if (part_length == 0) {
@@ -960,20 +703,24 @@ static int lua_fs_combine(lua_State* state) {
             part[1] == ':';
 
         if (is_absolute_drive_path) {
-            if (part_length >= LUA_FS_PATH_CAPACITY) {
+            if (part_length >= sizeof(result)) {
                 return luaL_argerror(state, argument_index, "path is too long");
             }
 
             result_length = 0;
-            for (size_t index = 0; index < part_length; index++) {
-                result[result_length++] = part[index] == '\\' ? '/' : part[index];
+            for (index = 0; index < part_length; index++) {
+                result[result_length++] =
+                    part[index] == '\\' ? '/' : part[index];
             }
             result[result_length] = '\0';
             continue;
         }
 
         part_start = 0;
-        while (part_start < part_length && lua_fs_is_separator(part[part_start])) {
+        while (
+            part_start < part_length &&
+            lua_fs_is_separator(part[part_start])
+        ) {
             part_start++;
         }
 
@@ -991,7 +738,7 @@ static int lua_fs_combine(lua_State* state) {
             !lua_fs_is_separator(result[result_length - 1]) &&
             result[result_length - 1] != ':'
         ) {
-            if (result_length + 1 >= sizeof(result)) {
+            if (result_length + 1U >= sizeof(result)) {
                 return luaL_error(state, "fs.combine result is too long");
             }
 
@@ -1002,8 +749,9 @@ static int lua_fs_combine(lua_State* state) {
             return luaL_error(state, "fs.combine result is too long");
         }
 
-        for (size_t index = part_start; index < part_length; index++) {
-            result[result_length++] = part[index] == '\\' ? '/' : part[index];
+        for (index = part_start; index < part_length; index++) {
+            result[result_length++] =
+                part[index] == '\\' ? '/' : part[index];
         }
 
         result[result_length] = '\0';
@@ -1016,21 +764,17 @@ static int lua_fs_combine(lua_State* state) {
 
 static int lua_fs_get_free_space(lua_State* state) {
     const char* path;
-    DWORD free_clusters;
-    FATFS* filesystem;
-    FRESULT result;
     uint64_t bytes;
+    FRESULT result;
 
     path = lua_fs_check_path(state, 1);
-    free_clusters = 0;
-    filesystem = NULL;
+    bytes = 0;
 
-    result = f_getfree(path, &free_clusters, &filesystem);
-    if (result != FR_OK || filesystem == NULL) {
-        return lua_fs_raise(state, "getFreeSpace", result == FR_OK ? FR_INT_ERR : result);
+    result = get_free_space(path, &bytes);
+    if (result != FR_OK) {
+        return lua_fs_raise(state, "getFreeSpace", result);
     }
 
-    bytes = (uint64_t)free_clusters * (uint64_t)filesystem->csize * (uint64_t)FF_MAX_SS;
     lua_pushinteger(state, (lua_Integer)bytes);
     return 1;
 }
@@ -1038,24 +782,16 @@ static int lua_fs_get_free_space(lua_State* state) {
 
 static int lua_fs_get_capacity(lua_State* state) {
     const char* path;
-    DWORD free_clusters;
-    FATFS* filesystem;
-    FRESULT result;
     uint64_t bytes;
+    FRESULT result;
 
     path = lua_fs_check_path(state, 1);
-    free_clusters = 0;
-    filesystem = NULL;
+    bytes = 0;
 
-    result = f_getfree(path, &free_clusters, &filesystem);
-    if (result != FR_OK || filesystem == NULL) {
-        return lua_fs_raise(state, "getCapacity", result == FR_OK ? FR_INT_ERR : result);
+    result = get_capacity(path, &bytes);
+    if (result != FR_OK) {
+        return lua_fs_raise(state, "getCapacity", result);
     }
-
-    bytes =
-        (uint64_t)(filesystem->n_fatent - 2U) *
-        (uint64_t)filesystem->csize *
-        (uint64_t)FF_MAX_SS;
 
     lua_pushinteger(state, (lua_Integer)bytes);
     return 1;
@@ -1080,7 +816,7 @@ static const luaL_Reg lua_fs_functions[] = {
     { "combine",      lua_fs_combine },
     { "getFreeSpace", lua_fs_get_free_space },
     { "getCapacity",  lua_fs_get_capacity },
-    { NULL,             NULL }
+    { NULL,           NULL }
 };
 
 

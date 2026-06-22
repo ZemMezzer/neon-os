@@ -6,8 +6,7 @@
 #include "lua_runner.h"
 #include "program_runtime.h"
 #include "shell_commands.h"
-
-#include "ff.h"
+#include "neon_fs.h"
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -25,10 +24,10 @@
 #define LUA_RUNNER_ATTR __attribute__((noinline, used, optimize("O0")))
 #define LUA_RUNNER_CLOSE_HOOK_INSTRUCTIONS 1024
 #define LUA_RUNNER_ALT_F4_EXIT_STATUS 0
-#define LUA_RUNNER_PATH_MAX 512
+#define LUA_RUNNER_PATH_MAX NEON_FS_PATH_MAX
 
 typedef struct LuaFileReader {
-    FIL file;
+    NeonFsFile file;
     FRESULT result;
     char buffer[512];
     int opened;
@@ -108,7 +107,7 @@ static const char* neon_lua_file_reader(
 
     bytes_read = 0;
 
-    reader->result = f_read(
+    reader->result = neon_fs_file_read(
         &reader->file,
         reader->buffer,
         (UINT)sizeof(reader->buffer),
@@ -298,7 +297,11 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     }
 
     reader.opened = 0;
-    reader.result = f_open(&reader.file, resolved_path, FA_READ);
+    reader.result = neon_fs_file_open(
+        &reader.file,
+        resolved_path,
+        NEON_FS_FILE_OPEN_READ
+    );
 
     if (reader.result != FR_OK) {
         console_write("lua: cannot open ");
@@ -316,7 +319,8 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     );
 
     if (state == NULL) {
-        f_close(&reader.file);
+        (void)neon_fs_file_close(&reader.file);
+        reader.opened = 0;
         console_write("lua: state creation failed\n");
         return LUA_RUNNER_ERR_STATE_CREATE;
     }
@@ -345,8 +349,15 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
         "t"
     );
 
-    f_close(&reader.file);
-    reader.opened = 0;
+    {
+        FRESULT close_result = neon_fs_file_close(&reader.file);
+
+        reader.opened = 0;
+
+        if (reader.result == FR_OK && close_result != FR_OK) {
+            reader.result = close_result;
+        }
+    }
 
     if (reader.result != FR_OK) {
         console_write("lua: file read error\n");
