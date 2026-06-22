@@ -36,6 +36,7 @@ target_compile_options(third_party PRIVATE
     -nostartfiles
 )
 
+add_subdirectory(third_party)
 add_subdirectory(arch)
 add_subdirectory(kernel)
 add_subdirectory(platforms)

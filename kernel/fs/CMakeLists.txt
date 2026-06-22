@@ -9,5 +9,3 @@ target_include_directories(objects PUBLIC
 target_sources(objects PRIVATE
     neon_fs.c
 )
-
-add_subdirectory(fatfs)
