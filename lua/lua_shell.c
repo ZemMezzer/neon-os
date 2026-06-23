@@ -4,8 +4,11 @@
 
 #include "console.h"
 #include "lua_runner.h"
-#include "lua_package_runner.h"
 #include "shell_commands.h"
+
+#if PACKAGES_ENABLED
+#include "lua_package_runner.h"
+#endif
 
 #define LUA_SHELL_PATH_MAX 512
 
@@ -199,7 +202,9 @@ void lua_shell_register_commands(void) {
 
     (void)shell_set_command_fallback(lua_shell_command_fallback);
 
+#if PACKAGES_ENABLED
     if (lua_package_runner_register() != 0) {
         console_write("lua: cannot register package runner\n");
     }
+#endif
 }

@@ -62,9 +62,12 @@ if(GFX_ENABLED)
     add_subdirectory(gfx)
 endif()
 
+if(PACKAGES_ENABLED)
+    add_subdirectory(packages)
+endif()
+
 add_subdirectory(input)
 add_subdirectory(fs)
 add_subdirectory(shell)
 add_subdirectory(zip)
-add_subdirectory(packages)
 add_subdirectory(buffer)

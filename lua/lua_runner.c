@@ -18,11 +18,14 @@
 #include "lua_bitmap.h"
 #endif
 
+#if PACKAGES_ENABLED
+#include "lua_npackages.h"
+#endif
+
 #include "lua_input.h"
 #include "lua_fs.h"
 #include "lua_shell_api.h"
 #include "lua_zip.h"
-#include "lua_npackages.h"
 #include "lua_buffer.h"
 
 #define LUA_RUNNER_ATTR __attribute__((noinline, used, optimize("O0")))
@@ -339,6 +342,11 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     lua_pop(state, 1);
 #endif
 
+#if PACKAGES_ENABLED
+    luaL_requiref(state, "npackages", luaopen_npackages, 1);
+    lua_pop(state, 1);
+#endif
+
     luaL_requiref(state, "input", luaopen_input, 1);
     lua_pop(state, 1);
 
@@ -351,8 +359,7 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     luaL_requiref(state, "zip", luaopen_zip, 1);
     lua_pop(state, 1);
 
-    luaL_requiref(state, "npackages", luaopen_npackages, 1);
-    lua_pop(state, 1);
+    
 
     luaL_requiref(state, "buffer", luaopen_buffer, 1);
     lua_pop(state, 1);

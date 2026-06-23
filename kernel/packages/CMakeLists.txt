@@ -1,3 +1,12 @@
+target_compile_definitions(objects PRIVATE
+    PACKAGES_ENABLED=1
+)
+
+target_compile_definitions(third_party PRIVATE
+    PACKAGES_ENABLED=1
+)
+
+
 target_sources(objects PRIVATE
     package_manager.c
     package_runner.c
