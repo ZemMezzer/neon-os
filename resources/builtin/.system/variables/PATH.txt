@@ -1,4 +1,5 @@
 ./.packages
 ./.system
 ./.system/neonos
+./.system/neonos/lua
 ./programs

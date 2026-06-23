@@ -45,6 +45,11 @@ typedef struct LuaRunSession {
     lua_State* state;
 } LuaRunSession;
 
+typedef struct LuaModulePathContext {
+    lua_State* state;
+    int failed;
+} LuaModulePathContext;
+
 static void* neon_lua_allocator(
     void* user_data,
     void* pointer,
@@ -71,6 +76,22 @@ static void lua_program_exit_handler(
 static void lua_program_close_hook(
     lua_State* state,
     lua_Debug* debug
+) LUA_RUNNER_ATTR;
+
+static int lua_program_append_module_directory(
+    lua_State* state,
+    const char* directory
+) LUA_RUNNER_ATTR;
+
+static int lua_program_path_directory_visitor(
+    const char* directory,
+    int path_index,
+    void* user_data
+) LUA_RUNNER_ATTR;
+
+static int lua_program_set_module_path(
+    lua_State* state,
+    const char* program_directory
 ) LUA_RUNNER_ATTR;
 
 
@@ -270,6 +291,166 @@ static int lua_program_directory_from_path(
     return 0;
 }
 
+static int lua_program_append_module_directory(
+    lua_State* state,
+    const char* directory
+) {
+    const char* separator;
+    int length;
+
+    if (
+        state == NULL ||
+        directory == NULL ||
+        directory[0] == '\0'
+    ) {
+        return -1;
+    }
+
+    separator = "/";
+    length = 0;
+
+    while (directory[length] != '\0') {
+        length++;
+    }
+
+    if (
+        length > 0 &&
+        (
+            directory[length - 1] == '/' ||
+            directory[length - 1] == '\\'
+        )
+    ) {
+        separator = "";
+    }
+
+    lua_getglobal(state, "package");
+
+    if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return -1;
+    }
+
+    lua_getfield(state, -1, "path");
+
+    if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        lua_pushliteral(state, "");
+    }
+
+    lua_pushfstring(
+        state,
+        "%s%s?.lua;%s%s?/init.lua;",
+        directory,
+        separator,
+        directory,
+        separator
+    );
+    lua_concat(state, 2);
+    lua_setfield(state, -2, "path");
+    lua_pop(state, 1);
+
+    return 0;
+}
+
+static int lua_program_path_directory_visitor(
+    const char* directory,
+    int path_index,
+    void* user_data
+) {
+    LuaModulePathContext* context;
+
+    (void)path_index;
+
+    context = (LuaModulePathContext*)user_data;
+
+    if (context == NULL || context->state == NULL) {
+        return -1;
+    }
+
+    if (
+        directory == NULL ||
+        directory[0] == '\0' ||
+        lua_program_append_module_directory(context->state, directory) != 0
+    ) {
+        context->failed = 1;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int lua_program_set_module_path(
+    lua_State* state,
+    const char* program_directory
+) {
+    LuaModulePathContext context;
+    int visit_result;
+
+    if (
+        state == NULL ||
+        program_directory == NULL ||
+        program_directory[0] == '\0'
+    ) {
+        return -1;
+    }
+
+    lua_getglobal(state, "package");
+
+    if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return -1;
+    }
+
+    lua_getfield(state, -1, "path");
+
+    if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        lua_pushliteral(state, "");
+    }
+
+    lua_pushliteral(state, "");
+    lua_setfield(state, -3, "path");
+
+    if (
+        lua_program_append_module_directory(
+            state,
+            program_directory
+        ) != 0
+    ) {
+        lua_pop(state, 2);
+        return -1;
+    }
+
+    context.state = state;
+    context.failed = 0;
+
+    visit_result = shell_visit_path_directories(
+        lua_program_path_directory_visitor,
+        &context
+    );
+
+    if (context.failed) {
+        lua_pop(state, 2);
+        return -1;
+    }
+
+    (void)visit_result;
+
+    lua_getfield(state, -2, "path");
+
+    if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        lua_pushliteral(state, "");
+    }
+
+    lua_pushvalue(state, -2);
+    lua_concat(state, 2);
+    lua_setfield(state, -3, "path");
+
+    lua_pop(state, 2);
+    return 0;
+}
+
 
 int lua_run_file_args(const char* path, int argc, char** argv) {
     LuaFileReader reader;
@@ -300,6 +481,17 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
         ) != 0
     ) {
         console_write("lua: invalid script path\n");
+        return LUA_RUNNER_ERR_INVALID_PATH;
+    }
+
+    if (
+        lua_program_directory_from_path(
+            resolved_path,
+            program_directory,
+            sizeof(program_directory)
+        ) != 0
+    ) {
+        console_write("lua: invalid script directory\n");
         return LUA_RUNNER_ERR_INVALID_PATH;
     }
 
@@ -334,6 +526,14 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
 
     luaL_openlibs(state);
 
+    if (lua_program_set_module_path(state, program_directory) != 0) {
+        (void)neon_fs_file_close(&reader.file);
+        reader.opened = 0;
+        console_write("lua: cannot configure module path\n");
+        lua_close(state);
+        return LUA_RUNNER_ERR_INVALID_PATH;
+    }
+
 #if GFX_ENABLED
     luaL_requiref(state, "gfx", luaopen_gfx, 1);
     lua_pop(state, 1);
@@ -358,8 +558,6 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
 
     luaL_requiref(state, "zip", luaopen_zip, 1);
     lua_pop(state, 1);
-
-    
 
     luaL_requiref(state, "buffer", luaopen_buffer, 1);
     lua_pop(state, 1);
@@ -397,11 +595,6 @@ int lua_run_file_args(const char* path, int argc, char** argv) {
     neon_lua_set_args(state, resolved_path, argc, argv);
 
     if (
-        lua_program_directory_from_path(
-            resolved_path,
-            program_directory,
-            sizeof(program_directory)
-        ) != 0 ||
         shell_get_current_directory(
             previous_shell_directory,
             sizeof(previous_shell_directory)
