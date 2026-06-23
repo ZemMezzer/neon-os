@@ -152,19 +152,16 @@ int shell_visit_commands(
     return 0;
 }
 
-int shell_commands_execute(const char* line) {
-    char work[SHELL_LINE_MAX];
-    char* argv[SHELL_MAX_ARGS];
-    int argc;
+int shell_commands_execute_argv(int argc, char** argv) {
     int index;
 
-    if (line == 0 || line[0] == '\0') {
-        return 0;
-    }
-
-    argc = shell_parse_line(line, work, sizeof(work), argv);
-
-    if (argc == 0) {
+    if (
+        argc <= 0 ||
+        argc > SHELL_MAX_ARGS ||
+        argv == 0 ||
+        argv[0] == 0 ||
+        argv[0][0] == '\0'
+    ) {
         return 0;
     }
 
@@ -187,6 +184,20 @@ int shell_commands_execute(const char* line) {
     console_write("\n");
 
     return 127;
+}
+
+int shell_commands_execute(const char* line) {
+    char work[SHELL_LINE_MAX];
+    char* argv[SHELL_MAX_ARGS];
+    int argc;
+
+    if (line == 0 || line[0] == '\0') {
+        return 0;
+    }
+
+    argc = shell_parse_line(line, work, sizeof(work), argv);
+
+    return shell_commands_execute_argv(argc, argv);
 }
 
 void shell_commands_init(void) {

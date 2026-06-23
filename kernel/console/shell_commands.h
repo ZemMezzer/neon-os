@@ -1,12 +1,7 @@
-#ifndef SHELL_COMMANDS_H
-#define SHELL_COMMANDS_H
+#pragma once
 
 #include "shell_limits.h"
 
-/*
- * Commands are linked into the kernel at the moment.  The name "command"
- * deliberately does not imply that a command is a disk executable yet.
- */
 typedef int (*ShellCommandFn)(int argc, char** argv);
 
 typedef int (*ShellCommandFallbackFn)(
@@ -83,8 +78,8 @@ int shell_is_direct_child_of_path(const char* absolute_path);
 
 int shell_run_script(const char* input_path);
 
+int shell_commands_execute_argv(int argc, char** argv);
+
 int shell_commands_execute(const char* line);
 
 void shell_commands_init(void);
-
-#endif /* SHELL_COMMANDS_H */

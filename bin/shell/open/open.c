@@ -13,11 +13,99 @@
 
 #include "console.h"
 
+static int bin_open_associated_application(
+    char* application,
+    char* file_path,
+    int argc,
+    char** argv
+) {
+    char application_path[SHELL_PATH_MAX];
+    char* application_argv[SHELL_MAX_ARGS];
+    int application_found;
+    int index;
+
+    if (
+        application == 0 ||
+        file_path == 0 ||
+        argc < 2 ||
+        argc > SHELL_MAX_ARGS ||
+        argv == 0
+    ) {
+        shell_print_error("cannot prepare associated application");
+        return -1;
+    }
+
+    application_argv[0] = application;
+    application_argv[1] = file_path;
+
+    for (index = 2; index < argc; index++) {
+        application_argv[index] = argv[index];
+    }
+
+    application_found = shell_find_path(
+        application,
+        application_path,
+        sizeof(application_path)
+    );
+
+    if (application_found < 0) {
+        shell_print_error("cannot search PATH for associated application");
+        return -1;
+    }
+
+    if (
+        application_found > 0 &&
+        shell_path_is_directory(application_path)
+    ) {
+#if PACKAGES_ENABLED
+        int program_status = 1;
+        PackageOpenResult package_result;
+
+        package_result = package_runner_open(
+            application_path,
+            argc - 1,
+            &application_argv[1],
+            &program_status
+        );
+
+        if (package_result == PACKAGE_OPEN_STARTED) {
+            return program_status;
+        }
+
+        if (package_result == PACKAGE_OPEN_NOT_PACKAGE) {
+            shell_print_error(
+                "associated application is not an installed package"
+            );
+            return -1;
+        }
+
+        if (package_result == PACKAGE_OPEN_NO_RUNNER) {
+            shell_print_error(
+                "associated application has no supported runner"
+            );
+            return -1;
+        }
+
+        shell_print_error("associated package runner failed");
+        return -1;
+#else
+        shell_print_error("package support is disabled");
+        return -1;
+#endif
+    }
+
+    /*
+     * Regular application files, including lua.lua, are launched by the
+     * shell fallback.  This keeps the arguments as an argv array and does
+     * not create a limited SHELL_LINE_MAX command string.
+     */
+    return shell_commands_execute_argv(argc, application_argv);
+}
+
 int bin_open_main(int argc, char** argv) {
     char path[SHELL_PATH_MAX];
     char extension[SHELL_ALIAS_EXTENSION_MAX];
     char application[SHELL_PATH_MAX];
-    char command[SHELL_LINE_MAX];
     int found;
     int extension_result;
     int alias_result;
@@ -111,11 +199,6 @@ int bin_open_main(int argc, char** argv) {
         return -1;
     }
 
-    if (argc != 2) {
-        shell_print_error("file associations do not accept arguments");
-        return -1;
-    }
-
     extension_result = shell_alias_get_path_extension(
         path,
         extension,
@@ -157,17 +240,10 @@ int bin_open_main(int argc, char** argv) {
         return -1;
     }
 
-    if (
-        shell_alias_build_open_command(
-            application,
-            path,
-            command,
-            sizeof(command)
-        ) != 0
-    ) {
-        shell_print_error("cannot build application command");
-        return -1;
-    }
-
-    return shell_commands_execute(command);
+    return bin_open_associated_application(
+        application,
+        path,
+        argc,
+        argv
+    );
 }
