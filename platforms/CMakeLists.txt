@@ -1,5 +1,7 @@
 if(PLATFORM STREQUAL "qemu")
     add_subdirectory(qemu)
+elseif(PLATFORM STREQUAL "raspi3b")
+    add_subdirectory(raspi3b)
 else()
     message(FATAL_ERROR "Unknown PLATFORM: ${PLATFORM}")
 endif()

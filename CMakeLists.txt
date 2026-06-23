@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.20)
 
 project(NeonOS C ASM)
 
-set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
 set(PLATFORM "" CACHE STRING "Target platform")
 set(ARCH "" CACHE STRING "Target arch")
 
@@ -78,7 +77,6 @@ target_link_options(${PROJECT_NAME} PRIVATE
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     OUTPUT_NAME "kernel.elf"
-    LINK_DEPENDS ${LINKER_SCRIPT}
 )
 
 add_custom_command(
