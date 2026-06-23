@@ -1,5 +1,6 @@
 lua=lua.lua
 npkg=.package_installer
+pkicn=image_viewer
 sh=terminal
 txt=notes
 c=notes

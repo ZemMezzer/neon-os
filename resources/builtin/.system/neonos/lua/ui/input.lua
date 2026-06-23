@@ -70,6 +70,16 @@ function InputEvent.poll()
     return InputEvent.key(key, modifiers)
 end
 
+function InputEvent.poll_latest()
+    local key, modifiers = raw_input.poll_latest()
+
+    if key == nil then
+        return nil
+    end
+
+    return InputEvent.key(key, modifiers)
+end
+
 function InputEvent.is_key(event)
     return type(event) == "table" and event.type == "key"
 end
